@@ -17,7 +17,7 @@ pkgs.mkShell {
     alias run-integration-test="sudo ./scripts/run_integration_test.sh"
     alias run-nixos-module-test='nix build .#checks.\${pkgs.stdenv.hostPlatform.system}.vm-test.driver -o target/vm-test-driver && ./target/vm-test-driver/bin/nixos-test-driver'
     
-    echo -e "\n\033[1;32m            -- development shell for vm-auth-scope -- \033[0m\n"
+    echo -e "\n\033[1;32m            -- development shell for vm-authn-scope -- \033[0m\n"
     echo -e "\033[1;33mCommands:\033[0m"
     echo -e "\033[1;34mrun-integration-test:\033[0m    Execute the test suite for integration verification."
     echo -e "\033[1;34mrun-nixos-module-test:\033[0m   Execute NixOS tests to validate system modules."

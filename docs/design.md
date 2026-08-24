@@ -1,4 +1,4 @@
-# Auth-Scope: vsock Certificate Authority — Design Document
+# VM-AuthN-Scope: vsock Certificate Authority — Design Document
 
 ## Overview
 
@@ -83,7 +83,7 @@ whose value is a compact JWT signed by the CA's private key.
 
 ```json
 {
-  "iss": "auth-scope-ca",
+  "iss": "authn-scope-ca",
   "sub": "service-a",
   "vm":  "local-vm",
   "cid": 3,
@@ -106,12 +106,12 @@ whose value is a compact JWT signed by the CA's private key.
 
 ## Configuration Schema
 
-### Host config (`/etc/auth-scope/host.json`)
+### Host config (`/etc/authn-scope/host.json`)
 
 ```json
 {
-  "ca_cert_path": "/etc/auth-scope/ca/ca-cert.pem",
-  "ca_key_path": "/etc/auth-scope/ca/ca-key.pem",
+  "ca_cert_path": "/etc/authn-scope/ca/ca-cert.pem",
+  "ca_key_path": "/etc/authn-scope/ca/ca-key.pem",
   "server_port": 900,
   "peer_port": 901,
   "cert_validity_days": 365,
@@ -137,7 +137,7 @@ whose value is a compact JWT signed by the CA's private key.
 }
 ```
 
-### Guest/Agent config (`/etc/auth-scope/agent.json`)
+### Guest/Agent config (`/etc/authn-scope/agent.json`)
 
 ```json
 {
@@ -182,7 +182,7 @@ To eliminate this vulnerability, the system implements a robust verification mec
 
 ## Early Service Startup with /dev/vsock in NixOS
 
-To ensure the Auth-Scope agent and server initialize as early as possible during the guest VM boot process, the services do not wait for standard network targets. Instead, they dynamically bind to the existence of the guest kernel's virtual socket device node `/dev/vsock`.
+To ensure the VM-AuthN-Scope agent and server initialize as early as possible during the guest VM boot process, the services do not wait for standard network targets. Instead, they dynamically bind to the existence of the guest kernel's virtual socket device node `/dev/vsock`.
 
 ### 1. Udev Device Tagging
 
@@ -213,28 +213,28 @@ By default, the host CID is a fixed system constant (`2`, representing the hyper
 ## File & Module Layout
 
 ```
-auth-scope/
+authn-scope/
 ├── Cargo.toml               # workspace root
 ├── Cargo.lock
 │
 ├── libs/
 │   ├── rust-libs/
-│   │   ├── auth-scope-proto/ # shared wire types, capability structures & codecs
-│   │   ├── auth-scope-ca/    # CA key/cert generation, signing, and JWT creation
-│   │   └── auth-scope-evaluator/ # capability validation utilities
+│   │   ├── authn-scope-proto/ # shared wire types, capability structures & codecs
+│   │   ├── authn-scope-ca/    # CA key/cert generation, signing, and JWT creation
+│   │   └── authn-scope-evaluator/ # capability validation utilities
 │   └── go-libs/
-│       └── auth-scope-evaluator/ # capability validation utilities (Go version)
+│       └── authn-scope-evaluator/ # capability validation utilities (Go version)
 │
 └── apps/
     └── rust-apps/
-        ├── auth-scope-server/ # host CA daemon
-        └── auth-scope-agent/  # guest agent
+        ├── authn-scope-server/ # host CA daemon
+        └── authn-scope-agent/  # guest agent
 ```
 
 ---
 
 ## CA Key Management
 
-- Running `auth-scope-server` with `--genkey` generates a self-signed P-256 Root CA keypair using `rcgen`.
-- If keys already exist at the paths specified in `/etc/auth-scope/host.json`, they are automatically removed and regenerated before starting the listener.
+- Running `authn-scope-server` with `--genkey` generates a self-signed P-256 Root CA keypair using `rcgen`.
+- If keys already exist at the paths specified in `/etc/authn-scope/host.json`, they are automatically removed and regenerated before starting the listener.
 - If `--genkey` is omitted, the server attempts to load existing keys. If they do not exist, it throws an error and exits immediately.

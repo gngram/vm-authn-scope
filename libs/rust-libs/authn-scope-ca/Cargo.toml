@@ -1,0 +1,16 @@
+[package]
+name    = "authn-scope-ca"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+authn-scope-proto = { workspace = true }
+rcgen            = { workspace = true }
+ring             = { workspace = true }
+rustls-pemfile   = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+base64           = { workspace = true }
+thiserror        = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }

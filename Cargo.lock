@@ -107,11 +107,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth-scope-agent"
+name = "authn-scope-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auth-scope-proto",
+ "authn-scope-proto",
  "clap",
  "libc",
  "rcgen",
@@ -127,11 +127,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth-scope-ca"
+name = "authn-scope-ca"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auth-scope-proto",
+ "authn-scope-proto",
  "base64",
  "rcgen",
  "ring",
@@ -143,11 +143,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth-scope-evaluator"
+name = "authn-scope-evaluator"
 version = "0.1.0"
 dependencies = [
- "auth-scope-ca",
- "auth-scope-proto",
+ "authn-scope-ca",
+ "authn-scope-proto",
  "rcgen",
  "ring",
  "tempfile",
@@ -157,7 +157,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth-scope-proto"
+name = "authn-scope-proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -167,12 +167,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "auth-scope-server"
+name = "authn-scope-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auth-scope-ca",
- "auth-scope-proto",
+ "authn-scope-ca",
+ "authn-scope-proto",
  "clap",
  "libc",
  "rcgen",

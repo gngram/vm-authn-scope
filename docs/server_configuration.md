@@ -1,6 +1,6 @@
-# Auth-Scope Host Server Configuration Reference
+# VM-AuthN-Scope Host Server Configuration Reference
 
-This document describes the configuration options available for the Auth-Scope Host Server (`auth-scope-server`). The configuration is defined in JSON format (typically stored at `/etc/auth-scope/host.json`).
+This document describes the configuration options available for the VM-AuthN-Scope Host Server (`authn-scope-server`). The configuration is defined in JSON format (typically stored at `/etc/authn-scope/host.json`).
 
 For a complete example, see [host.json](../config-examples/host.json).
 

@@ -1,0 +1,16 @@
+[package]
+name    = "authn-scope-evaluator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+authn-scope-proto = { workspace = true }
+authn-scope-ca    = { workspace = true }
+x509-parser      = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+rcgen            = { workspace = true } # Needed only for tests if we mock CA, but we can just use authn-scope-ca
+ring             = { workspace = true }
+
+[dev-dependencies]
+tempfile         = "3.10"

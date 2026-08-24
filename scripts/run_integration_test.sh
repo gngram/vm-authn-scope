@@ -12,10 +12,10 @@ echo "=> 1. Building the Rust workspace..."
 # Drop privileges just for the cargo build to avoid root ownership issues if possible
 if [ -n "$SUDO_USER" ]; then
     sudo -u "$SUDO_USER" cargo build --release
-    sudo -u "$SUDO_USER" bash -c "cd libs/go-libs/auth-scope-evaluator && go build -o ../../../target/release/auth-scope-eval-test-go ./cmd/auth-scope-eval-test-go"
+    sudo -u "$SUDO_USER" bash -c "cd libs/go-libs/authn-scope-evaluator && go build -o ../../../target/release/authn-scope-eval-test-go ./cmd/authn-scope-eval-test-go"
 else
     cargo build --release
-    cd libs/go-libs/auth-scope-evaluator && go build -o ../../../target/release/auth-scope-eval-test-go ./cmd/auth-scope-eval-test-go && cd ../../..
+    cd libs/go-libs/authn-scope-evaluator && go build -o ../../../target/release/authn-scope-eval-test-go ./cmd/authn-scope-eval-test-go && cd ../../..
 fi
 
 echo "=> 2. Setting up test host configuration..."
@@ -56,7 +56,7 @@ cat <<EOF >$WORKSPACE_DIR/test-result/temp/test-host.json
 EOF
 export RUST_LOG='debug'
 echo "=> 3. Starting host CA server in background (generating keys)..."
-./target/release/auth-scope-server --config $WORKSPACE_DIR/test-result/temp/test-host.json --genkey >$WORKSPACE_DIR/test-result/logs/server.log 2>&1 &
+./target/release/authn-scope-server --config $WORKSPACE_DIR/test-result/temp/test-host.json --genkey >$WORKSPACE_DIR/test-result/logs/server.log 2>&1 &
 SERVER_PID=$!
 
 sleep 2 # Let server bind
@@ -73,7 +73,7 @@ fi
 rm -f "$WORKSPACE_DIR/test-result/result-summary"
 
 echo "=> 6. Booting NixOS Guest VM..."
-./target/result-vm/bin/run-auth-scope-vm >$WORKSPACE_DIR/test-result/logs/vm.log 2>&1
+./target/result-vm/bin/run-authn-scope-vm >$WORKSPACE_DIR/test-result/logs/vm.log 2>&1
 
 echo "=> 7. Stopping Server...PID: $SERVER_PID"
 kill $SERVER_PID || true

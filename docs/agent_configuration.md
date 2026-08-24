@@ -1,6 +1,6 @@
-# Auth-Scope Guest Agent Configuration Reference
+# VM-AuthN-Scope Guest Agent Configuration Reference
 
-This document describes the configuration options available for the Auth-Scope Guest Agent (`auth-scope-agent`). The configuration is defined in JSON format (typically stored at `/etc/auth-scope/agent.json`).
+This document describes the configuration options available for the VM-AuthN-Scope Guest Agent (`authn-scope-agent`). The configuration is defined in JSON format (typically stored at `/etc/authn-scope/agent.json`).
 
 For a complete example, see [agent.json](../config-examples/agent.json).
 

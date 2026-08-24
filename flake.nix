@@ -1,5 +1,5 @@
 {
-  description = "Auth-Scope NixOS VM Test";
+  description = "VM-AuthN-Scope NixOS VM Test";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -15,8 +15,8 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs {inherit system;};
 
-    authScope = pkgs.callPackage ./nix/pkgs/auth-scope-rust.nix {};
-    authScopeGo = pkgs.callPackage ./nix/pkgs/auth-scope-go.nix {};
+    authScope = pkgs.callPackage ./nix/pkgs/authn-scope-rust.nix {};
+    authScopeGo = pkgs.callPackage ./nix/pkgs/authn-scope-go.nix {};
 
     # Evaluate multi-language treefmt rules for this specific target system
     treefmtEval = treefmt-nix.lib.evalModule pkgs {
@@ -35,7 +35,7 @@
     # Binds configuration wrapper dynamically to standard `nix fmt` terminal call
     formatter.${system} = treefmtEval.config.build.wrapper;
 
-    nixosModules.default = ./nix/modules/auth-scope.nix;
+    nixosModules.default = ./nix/modules/authn-scope.nix;
 
     # Pass the treefmt wrapper downstream into your development environment if required
     devShells.${system}.default = import ./nix/develop.nix {

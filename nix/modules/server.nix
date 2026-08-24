@@ -4,21 +4,21 @@
   pkgs,
   ...
 }: let
-  cfg = config.services.auth-scope.server;
-  shared = config.services.auth-scope;
+  cfg = config.services.authn-scope.server;
+  shared = config.services.authn-scope;
 in {
-  options.services.auth-scope.serverPort = lib.mkOption {
+  options.services.authn-scope.serverPort = lib.mkOption {
     type = lib.types.port;
     default = 900;
     description = "The vsock port the server listens on.";
   };
 
-  options.services.auth-scope.server = {
-    enable = lib.mkEnableOption "Auth-Scope Server";
+  options.services.authn-scope.server = {
+    enable = lib.mkEnableOption "VM-AuthN-Scope Server";
 
     package = lib.mkOption {
       type = lib.types.package;
-      description = "The auth-scope package to use.";
+      description = "The authn-scope package to use.";
     };
 
     settings = lib.mkOption {
@@ -41,13 +41,13 @@ in {
       KERNEL=="vsock", TAG+="systemd"
     '';
 
-    environment.etc."auth-scope/host.json".source =
+    environment.etc."authn-scope/host.json".source =
       (pkgs.formats.json {}).generate "host.json" (cfg.settings // {
         server_port = shared.serverPort;
       });
 
-    systemd.services.auth-scope-server = {
-      description = "Auth-Scope Host Server";
+    systemd.services.authn-scope-server = {
+      description = "VM-AuthN-Scope Host Server";
       wantedBy = [ "sysinit.target" ];
       unitConfig = {
         DefaultDependencies = false;
@@ -56,7 +56,7 @@ in {
       after = [ "dev-vsock.device" ];
       before = [ "sysinit.target" ];
       serviceConfig = {
-        ExecStart = "${cfg.package}/bin/auth-scope-server --config /etc/auth-scope/host.json${lib.optionalString cfg.generateKey " --genkey"}";
+        ExecStart = "${cfg.package}/bin/authn-scope-server --config /etc/authn-scope/host.json${lib.optionalString cfg.generateKey " --genkey"}";
         Restart = "always";
       };
     };

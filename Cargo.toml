@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "libs/rust-libs/auth-scope-proto",
-    "libs/rust-libs/auth-scope-ca",
-    "apps/rust-apps/auth-scope-server",
-    "apps/rust-apps/auth-scope-agent",
-    "libs/rust-libs/auth-scope-evaluator",
+    "libs/rust-libs/authn-scope-proto",
+    "libs/rust-libs/authn-scope-ca",
+    "apps/rust-apps/authn-scope-server",
+    "apps/rust-apps/authn-scope-agent",
+    "libs/rust-libs/authn-scope-evaluator",
 ]
 resolver = "2"
 
@@ -42,5 +42,5 @@ base64 = "0.22"
 
 
 # Workspace-internal crates
-auth-scope-proto = { path = "libs/rust-libs/auth-scope-proto" }
-auth-scope-ca    = { path = "libs/rust-libs/auth-scope-ca" }
+authn-scope-proto = { path = "libs/rust-libs/authn-scope-proto" }
+authn-scope-ca    = { path = "libs/rust-libs/authn-scope-ca" }

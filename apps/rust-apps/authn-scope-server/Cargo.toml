@@ -1,0 +1,23 @@
+[package]
+name    = "authn-scope-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "authn-scope-server"
+path = "src/main.rs"
+
+[dependencies]
+authn-scope-proto = { workspace = true }
+authn-scope-ca    = { workspace = true }
+tokio            = { workspace = true }
+tokio-vsock      = { workspace = true }
+rcgen            = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+clap             = { workspace = true }
+tracing          = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror        = { workspace = true }
+anyhow           = { workspace = true }
+libc             = "0.2"

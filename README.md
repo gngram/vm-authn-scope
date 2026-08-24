@@ -1,4 +1,4 @@
-# auth-scope
+# authn-scope
 
 A pure-Rust, zero-OpenSSL PKI system for securely issuing X.509 certificates
 to services across a multi-VM Linux vsock environment.
@@ -7,15 +7,15 @@ to services across a multi-VM Linux vsock environment.
 
 ```
 ┌──── HOST VM ────────────────────────────────────────────────────┐
-│  auth-scope-server                                              │
+│  authn-scope-server                                              │
 │    • Listens on vsock port (default 9000) as the CA             │
-│    • Reads /etc/auth-scope/host.json for VM/entity policy       │
+│    • Reads /etc/authn-scope/host.json for VM/entity policy       │
 │    • Issues ECDSA P-256 certificates with embedded capabilities │
 └─────────────────────────────┬───────────────────────────────────┘
                               │ vsock + TLS (rustls/ring)
 ┌──── GUEST VM (CID N) ───────▼───────────────────────────────────┐
-│  auth-scope-agent                                               │
-│    • Reads /etc/auth-scope/agent.json for entity list           │
+│  authn-scope-agent                                               │
+│    • Reads /etc/authn-scope/agent.json for entity list           │
 │    • Generates per-entity ECDSA P-256 keypair + CSR             │
 │    • Sends CSR over vsock TLS, stores signed cert + key         │
 └─────────────────────────────────────────────────────────────────┘
@@ -25,10 +25,10 @@ to services across a multi-VM Linux vsock environment.
 
 | Crate | Role |
 |---|---|
-| `auth-scope-proto` | Shared wire types (`CertRequest`/`CertResponse`), capability structs, framing codec |
-| `auth-scope-ca` | CA engine: init/load, CSR signing, JWT capability signer |
-| `auth-scope-server` | Host CA daemon binary (`auth-scope-server`) |
-| `auth-scope-agent` | Guest agent binary (`auth-scope-agent`) |
+| `authn-scope-proto` | Shared wire types (`CertRequest`/`CertResponse`), capability structs, framing codec |
+| `authn-scope-ca` | CA engine: init/load, CSR signing, JWT capability signer |
+| `authn-scope-server` | Host CA daemon binary (`authn-scope-server`) |
+| `authn-scope-agent` | Guest agent binary (`authn-scope-agent`) |
 
 ## Capability Mechanism
 
@@ -40,7 +40,7 @@ ECDSA P-256 private key.
 
 ```json
 {
-  "iss": "auth-scope-ca",
+  "iss": "authn-scope-ca",
   "sub": "frontend-api",
   "vm":  "vm-frontend",
   "cid": 42,
@@ -83,9 +83,9 @@ cargo build --release --workspace
 ```
 
 Output binaries:
-- `target/release/auth-scope-server`
-- `target/release/auth-scope-agent`
-- `target/release/auth-scope-eval-test`
+- `target/release/authn-scope-server`
+- `target/release/authn-scope-agent`
+- `target/release/authn-scope-eval-test`
 
 ## Integration Testing
 
@@ -107,24 +107,24 @@ sudo ./run_integration_test.sh
 ### 1. Host: Initialise the CA (one-time)
 
 ```bash
-sudo auth-scope-server --init --config config-examples/host.json
-# → Writes /etc/auth-scope/ca/ca-cert.pem and ca-key.pem
+sudo authn-scope-server --init --config config-examples/host.json
+# → Writes /etc/authn-scope/ca/ca-cert.pem and ca-key.pem
 ```
 
 ### 2. Host: Start the CA daemon
 
 ```bash
-sudo auth-scope-server --config /etc/auth-scope/host.json
+sudo authn-scope-server --config /etc/authn-scope/host.json
 ```
 
 ### 3. Guest: Run the agent
 
 ```bash
 # First, copy the CA cert from the host to the guest (out-of-band)
-scp host:/etc/auth-scope/ca/ca-cert.pem /etc/auth-scope/ca/ca-cert.pem
+scp host:/etc/authn-scope/ca/ca-cert.pem /etc/authn-scope/ca/ca-cert.pem
 
 # Request certificates for all configured entities
-sudo auth-scope-agent --config /etc/auth-scope/agent.json
+sudo authn-scope-agent --config /etc/authn-scope/agent.json
 ```
 
 ## Configuration Reference

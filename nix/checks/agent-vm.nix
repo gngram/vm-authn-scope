@@ -5,15 +5,15 @@
   pkgs,
   ...
 }: let
-  authScope = pkgs.callPackage ../pkgs/auth-scope-rust.nix {};
-  authScopeGo = pkgs.callPackage ../pkgs/auth-scope-go.nix {};
+  authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
+  authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
 in {
   imports = [
-    ../modules/auth-scope.nix
+    ../modules/authn-scope.nix
   ];
 
   # Set a hostname for the VM
-  networking.hostName = "auth-scope";
+  networking.hostName = "authn-scope";
   nix.settings.experimental-features = ["nix-command" "flakes"];
   nix.nixPath = ["nixpkgs=${pkgs.path}"];
 
@@ -40,8 +40,8 @@ in {
     ];
   };
 
-  # --- Auth-Scope Agent Configuration ---
-  services.auth-scope.agent = {
+  # --- VM-AuthN-Scope Agent Configuration ---
+  services.authn-scope.agent = {
     enable = true;
     package = authScope;
     settings = {
@@ -73,21 +73,21 @@ in {
   };
 
   # --- Evaluator Test Coordination Service ---
-  systemd.services.auth-scope-evaluator-test = {
-    description = "Run Auth-Scope Evaluator Test and Shutdown VM";
+  systemd.services.authn-scope-evaluator-test = {
+    description = "Run VM-AuthN-Scope Evaluator Test and Shutdown VM";
     wantedBy = ["multi-user.target"];
-    after = ["auth-scope-agent.service"];
-    requires = ["auth-scope-agent.service"];
+    after = ["authn-scope-agent.service"];
+    requires = ["authn-scope-agent.service"];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = pkgs.writeShellScript "run-eval-test" ''
         # Run tests and capture result
         echo "==> Evaluating generated capabilities (Rust)..."
-        if ${authScope}/bin/auth-scope-eval-test \
+        if ${authScope}/bin/authn-scope-eval-test \
           /workspace/test-result/service-a-cert.pem \
           /workspace/test-result/ca-cert.pem && \
           echo "==> Evaluating generated capabilities (Go)..." && \
-          ${authScopeGo}/bin/auth-scope-eval-test-go \
+          ${authScopeGo}/bin/authn-scope-eval-test-go \
           /workspace/test-result/service-a-cert.pem \
           /workspace/test-result/ca-cert.pem; then
             echo "SUCCESS" > /workspace/test-result/result-summary
