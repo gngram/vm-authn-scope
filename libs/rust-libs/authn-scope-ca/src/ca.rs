@@ -88,7 +88,7 @@ impl CertificateAuthority {
         dn.push(DnType::CommonName, "authn-scope-ca");
         dn.push(DnType::OrganizationName, "authn-scope");
         params.distinguished_name = dn;
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.is_ca = IsCa::Ca(BasicConstraints::Constrained(1));
         params.key_usages = vec![
             KeyUsagePurpose::KeyCertSign,
             KeyUsagePurpose::CrlSign,

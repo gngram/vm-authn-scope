@@ -1434,7 +1434,7 @@ endobj
   /Type /Font
   /Subtype /Type0
   /BaseFont /FWBWLO+LiberationSans-Bold
-  /Encoding /IdIdentity-H
+  /Encoding /Identity-H
   /DescendantFonts [133 0 R]
   /ToUnicode 136 0 R
 >>
@@ -1447,12 +1447,12 @@ endobj
   /BaseFont /FWBWLO+LiberationSans-Bold
   /CIDSystemInfo <<
     /Registry (Adobe)
-    /Ordering (IdIdentity)
+    /Ordering (Identity)
     /Supplement 0
   >>
   /FontDescriptor 135 0 R
   /DW 0
-  /CIDToGIDMap /IdIdentity
+  /CIDToGIDMap /Identity
   /W [0 0 750 1 1 722.16797 2 2 610.83984 3 3 333.0078 4 4 610.83984 5 5 333.0078 6 6 666.9922 7 7 556.15234 8 9 610.83984 10 10 556.15234 11 11 277.83203 12 13 556.15234 14 14 277.83203 15 15 666.9922 16 16 277.83203 17 17 610.83984 18 18 666.9922 19 19 277.83203 20 20 722.16797 21 21 556.15234 22 22 777.83203 23 23 389.16016 24 24 277.83203 25 25 777.83203 26 26 722.16797 27 27 666.9922 28 28 556.15234 29 29 722.16797 30 30 556.15234 31 31 610.83984 32 32 722.16797 33 33 610.83984 34 34 722.16797 35 36 610.83984 37 37 889.16016 38 38 722.16797 39 39 277.83203 40 40 610.83984 41 42 556.15234 43 43 833.0078 44 44 943.84766 45 45 610.83984 46 46 333.0078 47 47 610.83984 48 48 556.15234 49 49 722.16797]
 >>
 endobj
@@ -1494,7 +1494,7 @@ stream
 %%DocumentNeededResources: procset CIDInit
 %%IncludeResource: procset CIDInit
 %%BeginResource: CMap Custom
-%%Title: (Custom Adobe IdIdentity 0)
+%%Title: (Custom Adobe Identity 0)
 %%Version: 1
 %%EndComments
 /CIDInit /ProcSet findresource begin
@@ -1502,7 +1502,7 @@ stream
 begincmap
 /CIDSystemInfo 3 dict dup begin
     /Registry (Adobe) def
-    /Ordering (IdIdentity) def
+    /Ordering (Identity) def
     /Supplement 0 def
 end def
 /CMapName /Custom def
@@ -1628,7 +1628,7 @@ endobj
   /Type /Font
   /Subtype /Type0
   /BaseFont /KGDYBX+LiberationSans
-  /Encoding /IdIdentity-H
+  /Encoding /Identity-H
   /DescendantFonts [139 0 R]
   /ToUnicode 142 0 R
 >>
@@ -1641,12 +1641,12 @@ endobj
   /BaseFont /KGDYBX+LiberationSans
   /CIDSystemInfo <<
     /Registry (Adobe)
-    /Ordering (IdIdentity)
+    /Ordering (Identity)
     /Supplement 0
   >>
   /FontDescriptor 141 0 R
   /DW 0
-  /CIDToGIDMap /IdIdentity
+  /CIDToGIDMap /Identity
   /W [0 0 750 1 1 722.16797 2 2 500 3 4 556.15234 5 5 333.0078 6 6 500 7 7 222.16797 8 8 500 9 9 556.15234 10 10 333.0078 11 11 666.9922 12 12 277.83203 13 13 556.15234 14 14 277.83203 15 15 943.84766 16 16 500 17 17 222.16797 18 18 556.15234 19 19 277.83203 20 20 556.15234 21 21 833.0078 22 22 556.15234 23 24 666.9922 25 25 833.0078 26 26 500 27 27 277.83203 28 28 556.15234 29 29 722.16797 30 31 666.9922 32 32 556.15234 33 33 350.09766 34 34 277.83203 35 35 777.83203 36 36 556.15234 37 37 722.16797 38 39 333.0078 40 40 277.83203 41 41 222.16797 42 42 722.16797 43 43 666.9922 44 46 556.15234 47 47 277.83203 48 48 722.16797 49 49 500 50 50 610.83984 51 51 500 52 52 222.16797 53 53 556.15234 54 54 666.9922 55 55 556.15234 56 56 666.9922 57 57 556.15234 58 58 277.83203 59 59 556.15234 60 60 777.83203 61 61 722.16797 62 62 500 63 63 277.83203 64 64 610.83984 65 65 583.9844 66 66 556.15234]
 >>
 endobj
@@ -1688,7 +1688,7 @@ stream
 %%DocumentNeededResources: procset CIDInit
 %%IncludeResource: procset CIDInit
 %%BeginResource: CMap Custom
-%%Title: (Custom Adobe IdIdentity 0)
+%%Title: (Custom Adobe Identity 0)
 %%Version: 1
 %%EndComments
 /CIDInit /ProcSet findresource begin
@@ -1696,7 +1696,7 @@ stream
 begincmap
 /CIDSystemInfo 3 dict dup begin
     /Registry (Adobe) def
-    /Ordering (IdIdentity) def
+    /Ordering (Identity) def
     /Supplement 0 def
 end def
 /CMapName /Custom def
@@ -1844,8 +1844,8 @@ endobj
 <<
   /Type /Font
   /Subtype /Type0
-  /BaseFont /ZXCGTT+LibertinusSerif-Regular-IdIdentity-H
-  /Encoding /IdIdentity-H
+  /BaseFont /ZXCGTT+LibertinusSerif-Regular-Identity-H
+  /Encoding /Identity-H
   /DescendantFonts [145 0 R]
   /ToUnicode 148 0 R
 >>
@@ -1858,7 +1858,7 @@ endobj
   /BaseFont /ZXCGTT+LibertinusSerif-Regular
   /CIDSystemInfo <<
     /Registry (Adobe)
-    /Ordering (IdIdentity)
+    /Ordering (Identity)
     /Supplement 0
   >>
   /FontDescriptor 147 0 R
@@ -1904,7 +1904,7 @@ stream
 %%DocumentNeededResources: procset CIDInit
 %%IncludeResource: procset CIDInit
 %%BeginResource: CMap Custom
-%%Title: (Custom Adobe IdIdentity 0)
+%%Title: (Custom Adobe Identity 0)
 %%Version: 1
 %%EndComments
 /CIDInit /ProcSet findresource begin
@@ -1912,7 +1912,7 @@ stream
 begincmap
 /CIDSystemInfo 3 dict dup begin
     /Registry (Adobe) def
-    /Ordering (IdIdentity) def
+    /Ordering (Identity) def
     /Supplement 0 def
 end def
 /CMapName /Custom def
@@ -1954,7 +1954,7 @@ endobj
   /Type /Font
   /Subtype /Type0
   /BaseFont /ITAWZT+DejaVuSansMono
-  /Encoding /IdIdentity-H
+  /Encoding /Identity-H
   /DescendantFonts [151 0 R]
   /ToUnicode 154 0 R
 >>
@@ -1967,12 +1967,12 @@ endobj
   /BaseFont /ITAWZT+DejaVuSansMono
   /CIDSystemInfo <<
     /Registry (Adobe)
-    /Ordering (IdIdentity)
+    /Ordering (Identity)
     /Supplement 0
   >>
   /FontDescriptor 153 0 R
   /DW 0
-  /CIDToGIDMap /IdIdentity
+  /CIDToGIDMap /Identity
   /W [0 14 602.0508]
 >>
 endobj
@@ -2014,7 +2014,7 @@ stream
 %%DocumentNeededResources: procset CIDInit
 %%IncludeResource: procset CIDInit
 %%BeginResource: CMap Custom
-%%Title: (Custom Adobe IdIdentity 0)
+%%Title: (Custom Adobe Identity 0)
 %%Version: 1
 %%EndComments
 /CIDInit /ProcSet findresource begin
@@ -2022,7 +2022,7 @@ stream
 begincmap
 /CIDSystemInfo 3 dict dup begin
     /Registry (Adobe) def
-    /Ordering (IdIdentity) def
+    /Ordering (Identity) def
     /Supplement 0 def
 end def
 /CMapName /Custom def

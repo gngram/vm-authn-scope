@@ -2,7 +2,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rcgen::{CertificateSigningRequestParams, CustomExtension, KeyUsagePurpose};
+use rcgen::{
+    CertificateSigningRequestParams, CustomExtension, ExtendedKeyUsagePurpose, Ia5String,
+    KeyUsagePurpose, SanType,
+};
 use tracing::info;
 
 use authn_scope_proto::caps::{CapClaim, Capability};
@@ -68,10 +71,22 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     let mut csr_params = CertificateSigningRequestParams::from_pem(req.csr_pem)
         .map_err(|e| CaError::RcgenError(e))?;
 
-    // Set leaf-cert key usages.
+    // Set leaf-cert key usages to digitalSignature only.
     csr_params.params.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
-        KeyUsagePurpose::ContentCommitment,
+    ];
+
+    // Set extended key usages to serverAuth, clientAuth.
+    csr_params.params.extended_key_usages = vec![
+        ExtendedKeyUsagePurpose::ServerAuth,
+        ExtendedKeyUsagePurpose::ClientAuth,
+    ];
+
+    // Set subjectAltName to DNS:<identity>.
+    let dns_name = Ia5String::try_from(req.identity.clone())
+        .map_err(|e| CaError::CertParseFailed(e.to_string()))?;
+    csr_params.params.subject_alt_names = vec![
+        SanType::DnsName(dns_name),
     ];
 
     // Embed the capability JWT as a custom extension.
