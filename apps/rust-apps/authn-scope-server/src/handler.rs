@@ -3,7 +3,7 @@
 //! Each accepted vsock+TLS connection follows this flow:
 //!   1. Read a [`CertRequest`] frame.
 //!   2. Validate the claimed CID against the actual vsock peer CID.
-//!   3. Look up the CID+entity in the policy config.
+//!   3. Look up the CID+identity in the policy config.
 //!   4. Sign the CSR and embed capability claims.
 //!   5. Send a [`CertResponse`] frame.
 
@@ -13,8 +13,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
 
 use authn_scope_ca::{
+    signing::{sign_csr, SigningRequest},
     CertificateAuthority,
-    signing::{SigningRequest, sign_csr},
 };
 use authn_scope_proto::{
     codec::{recv_json, send_json},
@@ -69,23 +69,26 @@ where
             "unsupported protocol version {} (expected {})",
             req.version, PROTOCOL_VERSION
         );
-        warn!(peer_cid, entity = %req.entity, "{}", msg);
+        warn!(peer_cid, identity = %req.identity, "{}", msg);
         send_json(stream, &CertResponse::Error { message: msg }).await?;
         return Ok(());
     }
 
     info!(
         peer_cid,
-        entity = %req.entity,
+        identity = %req.identity,
         "Received certificate request"
     );
 
     // Policy lookup.
-    let decision = match resolve(config, &req.vm_name, &req.entity) {
+    let decision = match resolve(config, &req.vm_name, &req.identity) {
         Some(d) => d,
         None => {
-            let msg = format!("VM '{}' / entity '{}' not authorised", req.vm_name, req.entity);
-            warn!(peer_cid, vm_name = %req.vm_name, entity = %req.entity, "{}", msg);
+            let msg = format!(
+                "VM '{}' / identity '{}' not authorised",
+                req.vm_name, req.identity
+            );
+            warn!(peer_cid, vm_name = %req.vm_name, identity = %req.identity, "{}", msg);
             send_json(stream, &CertResponse::Error { message: msg }).await?;
             return Ok(());
         }
@@ -107,7 +110,7 @@ where
         ca,
         SigningRequest {
             csr_pem: &req.csr_pem,
-            entity: req.entity.clone(),
+            identity: req.identity.clone(),
             vm_name: decision.vm_name,
             cid: peer_cid,
             claims: decision.caps,
@@ -118,7 +121,7 @@ where
 
     info!(
         peer_cid,
-        entity = %req.entity,
+        identity = %req.identity,
         "Certificate issued successfully"
     );
 

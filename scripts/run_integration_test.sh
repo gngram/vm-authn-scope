@@ -34,7 +34,7 @@ cat <<EOF >$WORKSPACE_DIR/test-result/temp/test-host.json
   "vms": {
     "local-vm": {
       "vm_cid": 3,
-      "entities": {
+      "identities": {
         "service-a": {
           "caps": [
             {

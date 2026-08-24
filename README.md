@@ -9,14 +9,14 @@ to services across a multi-VM Linux vsock environment.
 ┌──── HOST VM ────────────────────────────────────────────────────┐
 │  authn-scope-server                                              │
 │    • Listens on vsock port (default 9000) as the CA             │
-│    • Reads /etc/authn-scope/host.json for VM/entity policy       │
+│    • Reads /etc/authn-scope/host.json for VM/Identity policy       │
 │    • Issues ECDSA P-256 certificates with embedded capabilities │
 └─────────────────────────────┬───────────────────────────────────┘
                               │ vsock + TLS (rustls/ring)
 ┌──── GUEST VM (CID N) ───────▼───────────────────────────────────┐
 │  authn-scope-agent                                               │
-│    • Reads /etc/authn-scope/agent.json for entity list           │
-│    • Generates per-entity ECDSA P-256 keypair + CSR             │
+│    • Reads /etc/authn-scope/agent.json for Identity list           │
+│    • Generates per-Identity ECDSA P-256 keypair + CSR             │
 │    • Sends CSR over vsock TLS, stores signed cert + key         │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -123,7 +123,7 @@ sudo authn-scope-server --config /etc/authn-scope/host.json
 # First, copy the CA cert from the host to the guest (out-of-band)
 scp host:/etc/authn-scope/ca/ca-cert.pem /etc/authn-scope/ca/ca-cert.pem
 
-# Request certificates for all configured entities
+# Request certificates for all configured identities
 sudo authn-scope-agent --config /etc/authn-scope/agent.json
 ```
 
@@ -144,14 +144,14 @@ sudo authn-scope-agent --config /etc/authn-scope/agent.json
 | Field | Type | Description |
 |---|---|---|
 | `vm_name` | string | Human-readable VM name |
-| `entities` | object | Map of entity name → `EntityPolicy` |
+| `identities` | object | Map of Identity name → `IdentityPolicy` |
 
-**`EntityPolicy`**
+**`IdentityPolicy`**
 
 | Field | Type | Description |
 |---|---|---|
 | `caps` | array | List of `Capability` grants |
-| `validity_days` | number? | Optional per-entity validity override |
+| `validity_days` | number? | Optional per-Identity validity override |
 
 ### Agent (`agent.json`)
 
@@ -160,13 +160,13 @@ sudo authn-scope-agent --config /etc/authn-scope/agent.json
 | `server_ca_cert` | string | Path to CA cert for TLS pinning |
 | `vsock_host_cid` | number | Host CID (default: 2) |
 | `server_port` | number | Server vsock port |
-| `entities` | array | List of `EntityEntry` |
+| `identities` | array | List of `IdentityEntry` |
 
-**`EntityEntry`**
+**`IdentityEntry`**
 
 | Field | Type | Description |
 |---|---|---|
-| `name` | string | Entity name (must match host config) |
+| `name` | string | Identity name (must match host config) |
 | `cert_path` | string | Where to write the signed cert |
 | `key_path` | string | Where to write the private key |
 | `ca_path` | string | Where to write the CA cert |
@@ -181,7 +181,7 @@ sudo authn-scope-agent --config /etc/authn-scope/agent.json
 - **CID validation**: the server cross-checks the CID claimed in the request payload against the actual vsock peer CID from the kernel — an attacker cannot spoof its own CID on the vsock layer.
 - **Certificate pinning**: the agent uses a custom `ServerCertVerifier` that accepts only the exact CA certificate bytes — standard CA trust anchors are not used.
 - **Capability JWT**: signed with the CA's ECDSA P-256 key using the IEEE P1363 fixed-length signature format (ES256). Any verifier with the CA's public key can validate capabilities without a separate PKI.
-- **Key file permissions**: the CA private key is written with mode 0600; entity keys are stored with the configured mode (default 0600).
+- **Key file permissions**: the CA private key is written with mode 0600; Identity keys are stored with the configured mode (default 0600).
 - **Root enforcement**: both binaries refuse to start without root privileges.
 
 ## Dependency Inventory (no C library deps)

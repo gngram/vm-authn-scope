@@ -7,7 +7,7 @@
 //! ```
 //!
 //! The agent connects to the host CA over vsock, requests certificates for
-//! every entity listed in the config, and writes the credentials to disk
+//! every Identity listed in the config, and writes the credentials to disk
 //! with the configured POSIX ownership and permissions.
 
 use std::{path::PathBuf, process};
@@ -27,7 +27,7 @@ use config::AgentConfig;
 #[derive(Debug, Parser)]
 #[command(
     name = "authn-scope-agent",
-    about = "Guest agent: requests entity certificates from the authn-scope host CA",
+    about = "Guest agent: requests Identity certificates from the authn-scope host CA",
     version
 )]
 struct Cli {

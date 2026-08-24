@@ -47,7 +47,7 @@ in {
     settings = {
       vm_name = "local-vm";
       server_port = 900;
-      entities = [
+      identities = [
         {
           name = "service-b";
           cert_path = "/workspace/test-result/service-b-cert.pem";

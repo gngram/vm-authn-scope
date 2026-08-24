@@ -14,9 +14,9 @@ use authn_scope_proto::{
 use anyhow::{bail, Context, Result};
 
 use crate::{
-    config::{AgentConfig, EntityEntry},
+    config::{AgentConfig, IdentityEntry},
     csr::generate_csr,
-    store::store_entity_credentials,
+    store::store_identity_credentials,
 };
 
 async fn connect_with_local_port(host_cid: u32, port: u32, local_port: u32) -> Result<VsockStream> {
@@ -100,13 +100,13 @@ async fn connect_with_local_port(host_cid: u32, port: u32, local_port: u32) -> R
     }
 }
 
-/// Request and store certificates for every entity in the config.
+/// Request and store certificates for every identity in the config.
 pub async fn run_agent(config: &AgentConfig) -> Result<()> {
-    for entity in &config.entities {
-        match request_cert(config, entity).await {
-            Ok(()) => info!(entity = %entity.name, "Certificate stored successfully"),
+    for identity in &config.identities {
+        match request_cert(config, identity).await {
+            Ok(()) => info!(identity = %identity.name, "Certificate stored successfully"),
             Err(e) => {
-                tracing::error!(entity = %entity.name, error = ?e, "Certificate request failed")
+                tracing::error!(identity = %identity.name, error = ?e, "Certificate request failed")
             }
         }
     }
@@ -124,24 +124,30 @@ pub async fn run_agent(config: &AgentConfig) -> Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
-                return Err(e).context(format!("binding persistent listener to client port {} to secure it", config.client_port));
+                return Err(e).context(format!(
+                    "binding persistent listener to client port {} to secure it",
+                    config.client_port
+                ));
             }
         }
     };
-    
-    info!(port = config.client_port, "Agent keeping client port secured. Sleeping indefinitely...");
+
+    info!(
+        port = config.client_port,
+        "Agent keeping client port secured. Sleeping indefinitely..."
+    );
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
     }
 }
 
-/// Request and store a certificate for a single entity.
-async fn request_cert(config: &AgentConfig, entity: &EntityEntry) -> Result<()> {
-    info!(entity = %entity.name, "Requesting certificate from host CA");
+/// Request and store a certificate for a single identity.
+async fn request_cert(config: &AgentConfig, identity: &IdentityEntry) -> Result<()> {
+    info!(identity = %identity.name, "Requesting certificate from host CA");
 
-    // Generate a fresh keypair and CSR for this entity.
-    let generated = generate_csr(&entity.name)
-        .with_context(|| format!("CSR generation for entity '{}'", entity.name))?;
+    // Generate a fresh keypair and CSR for this identity.
+    let generated = generate_csr(&identity.name)
+        .with_context(|| format!("CSR generation for identity '{}'", identity.name))?;
 
     // Connect to the host over vsock.
     let host_cid = std::env::var("VSOCK_HOST_CID")
@@ -157,7 +163,7 @@ async fn request_cert(config: &AgentConfig, entity: &EntityEntry) -> Result<()> 
     let req = CertRequest {
         version: PROTOCOL_VERSION,
         vm_name: config.vm_name.clone(),
-        entity: entity.name.clone(),
+        identity: identity.name.clone(),
         csr_pem: generated.csr_pem,
     };
     send_json(&mut stream, &req)
@@ -174,10 +180,19 @@ async fn request_cert(config: &AgentConfig, entity: &EntityEntry) -> Result<()> 
             cert_pem,
             ca_cert_pem,
         } => {
-            store_entity_credentials(entity, &cert_pem, &generated.key_pem, &ca_cert_pem)?;
+            store_identity_credentials(
+                identity,
+                &cert_pem,
+                &generated.key_pem,
+                &ca_cert_pem,
+            )?;
         }
         CertResponse::Error { message } => {
-            bail!("Server rejected request for '{}': {}", entity.name, message);
+            bail!(
+                "Server rejected request for '{}': {}",
+                identity.name,
+                message
+            );
         }
     }
 

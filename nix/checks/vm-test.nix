@@ -49,7 +49,7 @@
         cert_validity_days = 365;
         vms."local-vm" = {
           vm_cid = 1;
-          entities = {
+          identities = {
             service-a.caps = [
               {
                 target_vm = "local-vm";
@@ -78,7 +78,7 @@
       settings = {
         vm_name = "local-vm";
         server_port = 900;
-        entities = [
+        identities = [
           {
             name = "service-a";
             cert_path = "/var/lib/service-a/cert.pem";

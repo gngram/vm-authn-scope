@@ -14,8 +14,8 @@ pub struct AgentConfig {
     /// vsock port the server listens on (should be < 1000).
     #[serde(default = "default_server_port")]
     pub server_port: u32,
-    /// List of entities (services/processes) to request certificates for.
-    pub entities: Vec<EntityEntry>,
+    /// List of identities (services/processes) to request certificates for.
+    pub identities: Vec<IdentityEntry>,
     /// The client port to bind to when dialing.
     #[serde(default = "default_client_port")]
     pub client_port: u32,
@@ -29,10 +29,10 @@ fn default_client_port() -> u32 {
     901
 }
 
-/// Configuration for a single entity that needs a certificate.
+/// Configuration for a single identity that needs a certificate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityEntry {
-    /// Entity name — must match the name registered in the host config.
+pub struct IdentityEntry {
+    /// Identity name — must match the name registered in the host config.
     pub name: String,
     /// Destination path for the signed certificate PEM.
     pub cert_path: PathBuf,

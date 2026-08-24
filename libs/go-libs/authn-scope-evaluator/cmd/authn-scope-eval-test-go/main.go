@@ -34,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("[Go Evaluator] Successfully verified capability JWT for entity: %s\n", eval.Claim.Sub)
+	fmt.Printf("[Go Evaluator] Successfully verified capability JWT for Identity: %s\n", eval.Claim.Sub)
 
 	// Validate against the integration test configured capabilities in run_integration_test.sh
 	// The host configuration grants "service-a" the following:

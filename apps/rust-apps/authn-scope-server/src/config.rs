@@ -18,7 +18,7 @@ pub struct HostConfig {
     /// vsock port on which to listen (should be privileged / < 1000).
     #[serde(default = "default_server_port")]
     pub server_port: u32,
-    /// Default certificate validity in days (used when not overridden per-entity).
+    /// Default certificate validity in days (used when not overridden per-Identity).
     #[serde(default = "default_validity_days")]
     pub cert_validity_days: u32,
     /// Map of VM name → VM entry.
@@ -45,16 +45,16 @@ fn default_peer_port() -> u32 {
 pub struct VmEntry {
     /// vsock CID of the VM.
     pub vm_cid: u32,
-    /// Map of entity name → entity policy.
-    pub entities: HashMap<String, EntityPolicy>,
+    /// Map of Identity name → Identity policy.
+    pub identities: HashMap<String, IdentityPolicy>,
 }
 
-/// Policy for a single entity (service/process) running inside a VM.
+/// Policy for a single Identity (service/process) running inside a VM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityPolicy {
+pub struct IdentityPolicy {
     /// Capability grants to embed in the issued certificate.
     pub caps: Vec<Capability>,
-    /// Optional per-entity validity override (days). Falls back to global setting.
+    /// Optional per-Identity validity override (days). Falls back to global setting.
     pub validity_days: Option<u32>,
 }
 

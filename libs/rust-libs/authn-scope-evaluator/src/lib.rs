@@ -1,6 +1,6 @@
 //! Evaluator for authn-scope peer capability certificates.
 
-use authn_scope_ca::jwt::{CAP_EXTENSION_OID, verify_cap_jwt};
+use authn_scope_ca::jwt::{verify_cap_jwt, CAP_EXTENSION_OID};
 use authn_scope_proto::caps::CapClaim;
 use thiserror::Error;
 use x509_parser::parse_x509_certificate;
@@ -133,7 +133,7 @@ mod tests {
     use super::*;
     use authn_scope_ca::{
         ca::CertificateAuthority,
-        signing::{SigningRequest, sign_csr},
+        signing::{sign_csr, SigningRequest},
     };
     use authn_scope_proto::caps::{Capability, PathAccess};
     use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
@@ -170,7 +170,7 @@ mod tests {
             &ca,
             SigningRequest {
                 csr_pem: &csr_pem,
-                entity: "peer-service".into(),
+                identity: "peer-service".into(),
                 vm_name: "peer-vm".into(),
                 cid: 10,
                 claims: caps,

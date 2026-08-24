@@ -2,7 +2,7 @@
   "vm_name": "vm-frontend",
   "server_port": 900,
   "client_port": 901,
-  "entities": [
+  "identities": [
     {
       "name": "frontend-api",
       "cert_path": "/etc/frontend-api/tls/cert.pem",

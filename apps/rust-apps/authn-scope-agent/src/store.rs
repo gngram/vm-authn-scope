@@ -2,56 +2,56 @@
 
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, chown},
+    os::unix::fs::{chown, PermissionsExt},
     path::Path,
 };
 
 use anyhow::{Context, Result};
 use tracing::info;
 
-use crate::config::EntityEntry;
+use crate::config::IdentityEntry;
 
-/// Write the issued certificate, private key, and CA cert for `entity`.
+/// Write the issued certificate, private key, and CA cert for `identity`.
 ///
 /// Creates parent directories automatically.
 /// Sets POSIX ownership (uid/gid) and permission modes.
-pub fn store_entity_credentials(
-    entity: &EntityEntry,
+pub fn store_identity_credentials(
+    identity: &IdentityEntry,
     cert_pem: &str,
     key_pem: &str,
     ca_pem: &str,
 ) -> Result<()> {
     write_file(
-        &entity.cert_path,
+        &identity.cert_path,
         cert_pem.as_bytes(),
-        &entity.cert_mode,
-        entity.owner_uid,
-        entity.owner_gid,
+        &identity.cert_mode,
+        identity.owner_uid,
+        identity.owner_gid,
     )
-    .with_context(|| format!("writing cert to {}", entity.cert_path.display()))?;
+    .with_context(|| format!("writing cert to {}", identity.cert_path.display()))?;
 
     write_file(
-        &entity.key_path,
+        &identity.key_path,
         key_pem.as_bytes(),
-        &entity.key_mode,
-        entity.owner_uid,
-        entity.owner_gid,
+        &identity.key_mode,
+        identity.owner_uid,
+        identity.owner_gid,
     )
-    .with_context(|| format!("writing key to {}", entity.key_path.display()))?;
+    .with_context(|| format!("writing key to {}", identity.key_path.display()))?;
 
     write_file(
-        &entity.ca_path,
+        &identity.ca_path,
         ca_pem.as_bytes(),
-        &entity.cert_mode,
-        entity.owner_uid,
-        entity.owner_gid,
+        &identity.cert_mode,
+        identity.owner_uid,
+        identity.owner_gid,
     )
-    .with_context(|| format!("writing CA cert to {}", entity.ca_path.display()))?;
+    .with_context(|| format!("writing CA cert to {}", identity.ca_path.display()))?;
 
     info!(
-        entity = %entity.name,
-        cert   = %entity.cert_path.display(),
-        key    = %entity.key_path.display(),
+        identity = %identity.name,
+        cert   = %identity.cert_path.display(),
+        key    = %identity.key_path.display(),
         "Credentials stored"
     );
 

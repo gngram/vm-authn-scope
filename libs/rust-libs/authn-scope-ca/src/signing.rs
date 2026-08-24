@@ -10,15 +10,15 @@ use authn_scope_proto::caps::{CapClaim, Capability};
 use crate::{
     ca::CertificateAuthority,
     error::CaError,
-    jwt::{CAP_EXTENSION_OID, CapJwtSigner},
+    jwt::{CapJwtSigner, CAP_EXTENSION_OID},
 };
 
 /// Parameters for signing a single CSR.
 pub struct SigningRequest<'a> {
     /// PEM-encoded PKCS#10 CSR from the agent.
     pub csr_pem: &'a str,
-    /// The entity name (must match the CSR subject CN).
-    pub entity: String,
+    /// The Identity name (must match the CSR subject CN).
+    pub identity: String,
     /// The VM name of the requesting guest.
     pub vm_name: String,
     /// vsock CID of the requesting guest.
@@ -45,7 +45,7 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     // Build the capability claim.
     let claim = CapClaim {
         iss: "authn-scope-ca".into(),
-        sub: req.entity.clone(),
+        sub: req.identity.clone(),
         vm: req.vm_name.clone(),
         cid: req.cid,
         iat: now,
@@ -58,7 +58,7 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     let jwt = signer.sign(&claim)?;
 
     info!(
-        entity = %req.entity,
+        identity = %req.identity,
         vm = %req.vm_name,
         cid = req.cid,
         "Signing CSR and embedding capability JWT"

@@ -6,7 +6,7 @@
   "vms": {
     "vm-frontend": {
       "vm_cid": 42,
-      "entities": {
+      "identities": {
         "frontend-api": {
           "caps": [
             {
@@ -64,7 +64,7 @@
     },
     "vm-backend": {
       "vm_cid": 10,
-      "entities": {
+      "identities": {
         "backend-db": {
           "caps": [
             {

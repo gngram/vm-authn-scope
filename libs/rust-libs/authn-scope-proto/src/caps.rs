@@ -33,7 +33,7 @@ pub struct Capability {
 pub struct CapClaim {
     /// Issuer: always "authn-scope-ca".
     pub iss: String,
-    /// Subject: the entity (service) name.
+    /// Subject: the identity (service) name.
     pub sub: String,
     /// VM name of the certificate holder.
     pub vm: String,

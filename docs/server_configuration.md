@@ -25,14 +25,14 @@ Each key in the `vms` object is a string representing the guest VM's name (e.g.,
 
 | Field | Type | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `vm_cid` | `integer` | The vsock CID of the guest VM (used by the host server to verify caller identity). | *Required* |
-| `entities` | `object` | Map of entity names to their capability specifications. See [Entity & Capability Configuration](#entity--capability-configuration) below. | `{}` |
+| `vm_cid` | `integer` | The vsock CID of the guest VM (used by the host server to verify caller idIdentity). | *Required* |
+| `identities` | `object` | Map of Identity names to their capability specifications. See [Identity & Capability Configuration](#Identity--capability-configuration) below. | `{}` |
 
 ---
 
-## Entity & Capability Configuration
+## Identity & Capability Configuration
 
-Each key in the `entities` object is the name of a local service or process running on the guest VM (e.g., `"service-a"`). The value contains the capabilities embedded inside the issued certificate's custom extension JWT:
+Each key in the `identities` object is the name of a local service or process running on the guest VM (e.g., `"service-a"`). The value contains the capabilities embedded inside the issued certificate's custom extension JWT:
 
 | Field | Type | Description | Default |
 | :--- | :--- | :--- | :--- |

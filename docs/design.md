@@ -5,7 +5,7 @@
 A pure-Rust (no OpenSSL/C dependency) PKI system for multi-VM Linux environments.
 The **host CA** issues X.509 certificates over vsock, embedding capability claims (RBAC/CBAC) as a
 custom X.509 extension encoded as a JSON Web Token (JWT)-style structure.
-Each **guest VM** runs an agent that requests certificates on behalf of local entities (services/processes).
+Each **guest VM** runs an agent that requests certificates on behalf of local identities (services/processes).
 
 ---
 
@@ -42,7 +42,7 @@ A simple length-prefixed JSON protocol over the vsock channel:
 ```json
 {
   "version": 1,
-  "entity": "service-a",
+  "Identity": "service-a",
   "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\n..."
 }
 ```
@@ -118,7 +118,7 @@ whose value is a compact JWT signed by the CA's private key.
   "vms": {
     "local-vm": {
       "vm_cid": 3,
-      "entities": {
+      "identities": {
         "service-a": {
           "caps": [
             {
@@ -144,7 +144,7 @@ whose value is a compact JWT signed by the CA's private key.
   "vm_name": "local-vm",
   "server_port": 900,
   "client_port": 901,
-  "entities": [
+  "identities": [
     {
       "name": "service-a",
       "cert_path": "/var/lib/service-a/cert.pem",
@@ -171,7 +171,7 @@ To eliminate this vulnerability, the system implements a robust verification mec
    When the server accepts a connection, it extracts the peer address and verifies the client source port (`peer_addr.port()`). The server requires the client to bind to a specific, configured client port (configured via `peer_port`, defaulting to `901`). Connections originating from any other source ports are immediately terminated, preventing spoofing or malicious local processes from bypassing the agent.
 2. **Server-Side Privilege Verification**:
    The server daemon binds to a low-numbered port (configured via `server_port`, defaulting to `900`). The kernel limits bindings on these ports to privileged processes running as `root`.
-3. **VM Identity Matching**:
+3. **VM IdIdentity Matching**:
    The guest agent sends its expected `vm_name` in the certificate request. The server looks up this VM in its configurations and validates that the connection's source CID matches the registered `vm_cid` of that VM.
 
 > [!IMPORTANT]

@@ -12,8 +12,8 @@ pub struct CertRequest {
     pub version: u32,
     /// Name of the VM requesting the certificate.
     pub vm_name: String,
-    /// Name of the entity (service/process) requesting the certificate.
-    pub entity: String,
+    /// Name of the identity (service/process) requesting the certificate.
+    pub identity: String,
     /// PEM-encoded PKCS#10 Certificate Signing Request.
     pub csr_pem: String,
 }
@@ -24,7 +24,7 @@ pub struct CertRequest {
 pub enum CertResponse {
     /// Certificate issued successfully.
     Ok {
-        /// PEM-encoded signed end-entity certificate.
+        /// PEM-encoded signed end-identity certificate.
         cert_pem: String,
         /// PEM-encoded CA certificate (for trust-chain distribution).
         ca_cert_pem: String,
