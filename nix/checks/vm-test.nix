@@ -84,8 +84,8 @@
             cert_path = "/var/lib/service-a/cert.pem";
             key_path = "/var/lib/service-a/key.pem";
             ca_path = "/var/lib/service-a/ca.pem";
-            owner_uid = 0;
-            owner_gid = 0;
+            owner_user = "service-a";
+            owner_group = "service-a";
             cert_mode = "0644";
             key_mode = "0600";
           }
@@ -94,8 +94,8 @@
             cert_path = "/var/lib/service-b/cert.pem";
             key_path = "/var/lib/service-b/key.pem";
             ca_path = "/var/lib/service-b/ca.pem";
-            owner_uid = 0;
-            owner_gid = 0;
+            owner_user = "service-b";
+            owner_group = "service-b";
             cert_mode = "0644";
             key_mode = "0600";
           }
@@ -104,8 +104,8 @@
             cert_path = "/var/lib/service-c/cert.pem";
             key_path = "/var/lib/service-c/key.pem";
             ca_path = "/var/lib/service-c/ca.pem";
-            owner_uid = 0;
-            owner_gid = 0;
+            owner_user = "service-c";
+            owner_group = "service-c";
             cert_mode = "0644";
             key_mode = "0600";
           }
@@ -139,11 +139,17 @@ in
       output = machine.succeed("journalctl -u authn-scope-agent.service")
       print(output)
 
-      # Verify certificates were created
+      # Verify certificates were created and have correct ownership
       with subtest("-- get certificates test --"):
           machine.succeed("ls -la /var/lib/service-a/cert.pem")
           machine.succeed("ls -la /var/lib/service-b/cert.pem")
           machine.succeed("ls -la /var/lib/service-c/cert.pem")
+
+          # Assert user/group ownership matches configured system accounts
+          assert "service-a:service-a" in machine.succeed("stat -c '%U:%G' /var/lib/service-a/cert.pem")
+          assert "service-b:service-b" in machine.succeed("stat -c '%U:%G' /var/lib/service-b/cert.pem")
+          assert "service-c:service-c" in machine.succeed("stat -c '%U:%G' /var/lib/service-c/cert.pem")
+
           print("\033[94m" + "\n-- get certificates test completed successfully --\n" + "\033[0m")
 
       # Evaluate service-a's capabilities using the evaluator test binary

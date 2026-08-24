@@ -53,8 +53,8 @@ in {
           cert_path = "/workspace/test-result/service-b-cert.pem";
           key_path = "/workspace/test-result/service-b-key.pem";
           ca_path = "/workspace/test-result/service-b-ca.pem";
-          owner_uid = 0;
-          owner_gid = 0;
+          owner_user = "root";
+          owner_group = "root";
           cert_mode = "0644";
           key_mode = "0600";
         }
@@ -63,8 +63,8 @@ in {
           cert_path = "/workspace/test-result/service-a-cert.pem";
           key_path = "/workspace/test-result/service-a-key.pem";
           ca_path = "/workspace/test-result/service-a-ca.pem";
-          owner_uid = 0;
-          owner_gid = 0;
+          owner_user = "root";
+          owner_group = "root";
           cert_mode = "0644";
           key_mode = "0600";
         }

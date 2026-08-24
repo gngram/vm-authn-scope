@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    os::unix::fs::{chown, PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::Path,
 };
 
@@ -21,12 +21,22 @@ pub fn store_identity_credentials(
     key_pem: &str,
     ca_pem: &str,
 ) -> Result<()> {
+    // Lookup numeric UID for the specified user
+    let user = uzers::get_user_by_name(&identity.owner_user)
+        .with_context(|| format!("user '{}' not found on system", identity.owner_user))?;
+    let uid = user.uid();
+
+    // Lookup numeric GID for the specified group
+    let group = uzers::get_group_by_name(&identity.owner_group)
+        .with_context(|| format!("group '{}' not found on system", identity.owner_group))?;
+    let gid = group.gid();
+
     write_file(
         &identity.cert_path,
         cert_pem.as_bytes(),
         &identity.cert_mode,
-        identity.owner_uid,
-        identity.owner_gid,
+        uid,
+        gid,
     )
     .with_context(|| format!("writing cert to {}", identity.cert_path.display()))?;
 
@@ -34,8 +44,8 @@ pub fn store_identity_credentials(
         &identity.key_path,
         key_pem.as_bytes(),
         &identity.key_mode,
-        identity.owner_uid,
-        identity.owner_gid,
+        uid,
+        gid,
     )
     .with_context(|| format!("writing key to {}", identity.key_path.display()))?;
 
@@ -43,8 +53,8 @@ pub fn store_identity_credentials(
         &identity.ca_path,
         ca_pem.as_bytes(),
         &identity.cert_mode,
-        identity.owner_uid,
-        identity.owner_gid,
+        uid,
+        gid,
     )
     .with_context(|| format!("writing CA cert to {}", identity.ca_path.display()))?;
 
@@ -76,8 +86,10 @@ fn write_file(path: &Path, data: &[u8], mode_str: &str, uid: u32, gid: u32) -> R
     fs::set_permissions(path, perms)
         .with_context(|| format!("setting permissions on {}", path.display()))?;
 
-    // Set ownership.
-    chown(path, Some(uid), Some(gid))
+    // Set ownership using rustix.
+    let rustix_uid = unsafe { rustix::fs::Uid::from_raw(uid) };
+    let rustix_gid = unsafe { rustix::fs::Gid::from_raw(gid) };
+    rustix::fs::chown(path, Some(rustix_uid), Some(rustix_gid))
         .with_context(|| format!("chown {}:{} on {}", uid, gid, path.display()))?;
 
     Ok(())

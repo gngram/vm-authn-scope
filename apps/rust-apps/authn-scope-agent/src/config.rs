@@ -40,10 +40,10 @@ pub struct IdentityEntry {
     pub key_path: PathBuf,
     /// Destination path for the CA certificate PEM.
     pub ca_path: PathBuf,
-    /// Unix UID for the written files (requires agent runs as root).
-    pub owner_uid: u32,
-    /// Unix GID for the written files.
-    pub owner_gid: u32,
+    /// Unix user account for the written files (requires agent runs as root).
+    pub owner_user: String,
+    /// Unix group name for the written files.
+    pub owner_group: String,
     /// Unix permission mode for the certificate file (e.g. "0640").
     #[serde(default = "default_cert_mode")]
     pub cert_mode: String,
