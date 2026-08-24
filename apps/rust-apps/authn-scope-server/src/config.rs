@@ -54,6 +54,8 @@ pub struct VmEntry {
 pub struct IdentityPolicy {
     /// Capability grants to embed in the issued certificate.
     pub caps: Vec<Capability>,
+    /// Optional IP address to embed in the certificate's subjectAltName.
+    pub ip: Option<String>,
     /// Optional per-Identity validity override (days). Falls back to global setting.
     pub validity_days: Option<u32>,
 }

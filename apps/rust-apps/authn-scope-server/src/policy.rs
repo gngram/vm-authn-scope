@@ -10,6 +10,7 @@ pub struct PolicyDecision {
     pub vm_name: String,
     pub vm_cid: u32,
     pub caps: Vec<Capability>,
+    pub ip: Option<String>,
     pub validity_days: u32,
 }
 
@@ -25,6 +26,7 @@ pub fn resolve(config: &HostConfig, vm_name: &str, identity: &str) -> Option<Pol
         vm_name: vm_name.to_string(),
         vm_cid: vm_entry.vm_cid,
         caps: policy.caps.clone(),
+        ip: policy.ip.clone(),
         validity_days: policy.validity_days.unwrap_or(config.cert_validity_days),
     })
 }

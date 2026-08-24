@@ -9,7 +9,7 @@
 
     # We need vsock loopback support
     boot.kernelModules = ["vsock_loopback"];
-    environment.systemPackages = [pkgs.time authScopeGo];
+    environment.systemPackages = [pkgs.time authScopeGo pkgs.openssl];
 
     # CA Storage
     systemd.tmpfiles.rules = [
@@ -50,21 +50,28 @@
         vms."local-vm" = {
           vm_cid = 1;
           identities = {
-            service-a.caps = [
-              {
-                target_vm = "local-vm";
-                rpc_modules = ["auth"];
-                rpc_methods = ["data.read_secure"];
-                paths = [
-                  {
-                    path = "/api/v1/health";
-                    access = ["read"];
-                  }
-                ];
-              }
-            ];
-            service-b.caps = [];
-            service-c.caps = [];
+            service-a = {
+              ip = "127.0.0.1";
+              caps = [
+                {
+                  target_vm = "local-vm";
+                  rpc_modules = ["auth"];
+                  rpc_methods = ["data.read_secure"];
+                  paths = [
+                    {
+                      path = "/api/v1/health";
+                      access = ["read"];
+                    }
+                  ];
+                }
+              ];
+            };
+            service-b = {
+              caps = [];
+            };
+            service-c = {
+              caps = [];
+            };
           };
         };
       };
@@ -149,6 +156,10 @@ in
           assert "service-a:service-a" in machine.succeed("stat -c '%U:%G' /var/lib/service-a/cert.pem")
           assert "service-b:service-b" in machine.succeed("stat -c '%U:%G' /var/lib/service-b/cert.pem")
           assert "service-c:service-c" in machine.succeed("stat -c '%U:%G' /var/lib/service-c/cert.pem")
+
+          # Verify IP SAN is embedded in service-a cert
+          cert_text = machine.succeed("openssl x509 -in /var/lib/service-a/cert.pem -noout -text")
+          assert "IP Address:127.0.0.1" in cert_text
 
           print("\033[94m" + "\n-- get certificates test completed successfully --\n" + "\033[0m")
 

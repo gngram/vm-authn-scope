@@ -28,6 +28,8 @@ pub struct SigningRequest<'a> {
     pub cid: u32,
     /// Capability claims to embed in the certificate extension.
     pub claims: Vec<Capability>,
+    /// Optional IP address to embed in the certificate's subjectAltName.
+    pub ip: Option<String>,
     /// Certificate validity in days.
     pub validity_days: u32,
 }
@@ -82,12 +84,17 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
         ExtendedKeyUsagePurpose::ClientAuth,
     ];
 
-    // Set subjectAltName to DNS:<identity>.
+    // Set subjectAltName to DNS:<identity> and optionally IP:<ip>.
     let dns_name = Ia5String::try_from(req.identity.clone())
         .map_err(|e| CaError::CertParseFailed(e.to_string()))?;
-    csr_params.params.subject_alt_names = vec![
-        SanType::DnsName(dns_name),
-    ];
+    let mut sans = vec![SanType::DnsName(dns_name)];
+    if let Some(ref ip_str) = req.ip {
+        let ip_addr: std::net::IpAddr = ip_str
+            .parse()
+            .map_err(|e| CaError::CertParseFailed(format!("invalid IP address '{}': {}", ip_str, e)))?;
+        sans.push(SanType::IpAddress(ip_addr));
+    }
+    csr_params.params.subject_alt_names = sans;
 
     // Embed the capability JWT as a custom extension.
     // The extension value is the raw UTF-8 bytes of the JWT string,

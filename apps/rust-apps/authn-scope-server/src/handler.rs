@@ -114,6 +114,7 @@ where
             vm_name: decision.vm_name,
             cid: peer_cid,
             claims: decision.caps,
+            ip: decision.ip,
             validity_days: decision.validity_days,
         },
     )
