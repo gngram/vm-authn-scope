@@ -1,0 +1,15 @@
+[package]
+name    = "profiler"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "profiler"
+path = "src/main.rs"
+
+[dependencies]
+authn-scope-ca    = { workspace = true }
+authn-scope-proto = { workspace = true }
+rcgen             = { workspace = true }
+anyhow            = { workspace = true }
+time              = { workspace = true }

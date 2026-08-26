@@ -1,37 +1,75 @@
 //! Wire-protocol request/response types exchanged over the vsock+TLS channel.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Protocol version constant.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Sent by the guest agent to the host CA to request a certificate.
+/// Request sent by the agent to the host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CertRequest {
-    /// Must equal [`PROTOCOL_VERSION`].
-    pub version: u32,
-    /// Name of the VM requesting the certificate.
-    pub vm_name: String,
-    /// Name of the identity (service/process) requesting the certificate.
-    pub identity: String,
-    /// PEM-encoded PKCS#10 Certificate Signing Request.
-    pub csr_pem: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentRequest {
+    Handshake {
+        version: u32,
+        vm_name: String,
+    },
+    CertRequest {
+        version: u32,
+        vm_name: String,
+        identity: String, // mapped workload name
+        csr_pem: String,
+    },
 }
 
-/// Response sent by the host CA to the guest agent.
+/// Workload configuration containing its selector and capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkloadConfig {
+    pub selector: SelectorConfig,
+    pub validity_seconds: u32,
+}
+
+/// Selector configuration containing unix and/or systemd identifiers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SelectorConfig {
+    #[serde(default)]
+    pub unix: Option<UnixSelector>,
+    #[serde(default)]
+    pub systemd: Option<SystemdSelector>,
+}
+
+/// Unix peer identifiers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct UnixSelector {
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(rename = "bin-path", default)]
+    pub bin_path: Option<String>,
+}
+
+/// Systemd process identifiers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SystemdSelector {
+    #[serde(default)]
+    pub unitpath: Option<String>,
+    #[serde(default)]
+    pub unitname: Option<String>,
+}
+
+/// Response sent by the host to the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
-pub enum CertResponse {
-    /// Certificate issued successfully.
-    Ok {
-        /// PEM-encoded signed end-identity certificate.
+pub enum AgentResponse {
+    HandshakeOk {
+        workloads: HashMap<String, WorkloadConfig>,
+    },
+    CertOk {
         cert_pem: String,
-        /// PEM-encoded CA certificate (for trust-chain distribution).
         ca_cert_pem: String,
     },
-    /// The request was rejected.
     Error {
-        /// Human-readable rejection reason.
         message: String,
     },
 }

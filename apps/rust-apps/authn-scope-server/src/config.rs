@@ -6,7 +6,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use authn_scope_proto::caps::Capability;
+use authn_scope_proto::wire::SelectorConfig;
 
 /// Top-level host configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,9 +18,6 @@ pub struct HostConfig {
     /// vsock port on which to listen (should be privileged / < 1000).
     #[serde(default = "default_server_port")]
     pub server_port: u32,
-    /// Default certificate validity in days (used when not overridden per-Identity).
-    #[serde(default = "default_validity_days")]
-    pub cert_validity_days: u32,
     /// Map of VM name → VM entry.
     pub vms: HashMap<String, VmEntry>,
     /// Expected peer port of the client agent.
@@ -32,10 +29,6 @@ fn default_server_port() -> u32 {
     900
 }
 
-fn default_validity_days() -> u32 {
-    365
-}
-
 fn default_peer_port() -> u32 {
     901
 }
@@ -45,19 +38,80 @@ fn default_peer_port() -> u32 {
 pub struct VmEntry {
     /// vsock CID of the VM.
     pub vm_cid: u32,
-    /// Map of Identity name → Identity policy.
+    /// IP address of the VM (embedded in issued certificates).
+    pub ip: Option<String>,
+    /// Map of Workload name → Identity policy.
     pub identities: HashMap<String, IdentityPolicy>,
 }
 
-/// Policy for a single Identity (service/process) running inside a VM.
+/// Policy for a single Workload running inside a VM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityPolicy {
-    /// Capability grants to embed in the issued certificate.
-    pub caps: Vec<Capability>,
-    /// Optional IP address to embed in the certificate's subjectAltName.
-    pub ip: Option<String>,
-    /// Optional per-Identity validity override (days). Falls back to global setting.
-    pub validity_days: Option<u32>,
+    /// Comma-separated selector string (e.g. "unix:uid:1000,systemd:unitname:service-a").
+    pub selector: String,
+    /// TTL in minutes for the issued certificate.
+    pub ttl_minutes: u32,
+}
+
+impl IdentityPolicy {
+    /// Parse the selector string into SelectorConfig wire representation.
+    pub fn parse_selector(&self) -> anyhow::Result<SelectorConfig> {
+        let mut unix = authn_scope_proto::wire::UnixSelector::default();
+        let mut systemd = authn_scope_proto::wire::SystemdSelector::default();
+        let mut has_unix = false;
+        let mut has_systemd = false;
+
+        for part in self.selector.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+
+            let subparts: Vec<&str> = part.splitn(3, ':').collect();
+            if subparts.len() < 3 {
+                anyhow::bail!("Invalid selector component: '{}'", part);
+            }
+
+            let domain = subparts[0];
+            let key = subparts[1];
+            let value = subparts[2];
+
+            match (domain, key) {
+                ("unix", "user") => {
+                    unix.user = Some(value.to_string());
+                    has_unix = true;
+                }
+                ("unix", "group") => {
+                    unix.group = Some(value.to_string());
+                    has_unix = true;
+                }
+                ("unix", "bin") => {
+                    unix.bin_path = Some(value.to_string());
+                    has_unix = true;
+                }
+                ("systemd", "unitname") => {
+                    systemd.unitname = Some(value.to_string());
+                    has_systemd = true;
+                }
+                ("systemd", "unitpath") => {
+                    systemd.unitpath = Some(value.to_string());
+                    has_systemd = true;
+                }
+                _ => {
+                    anyhow::bail!("Unknown selector component: '{}'", part);
+                }
+            }
+        }
+
+        if unix.bin_path.is_some() && (unix.user.is_none() || unix.group.is_none()) {
+            anyhow::bail!("if bin-path is specified then it must be attached to a user:group (both unix:user and unix:group must be present)");
+        }
+
+        Ok(SelectorConfig {
+            unix: if has_unix { Some(unix) } else { None },
+            systemd: if has_systemd { Some(systemd) } else { None },
+        })
+    }
 }
 
 impl HostConfig {
@@ -71,6 +125,15 @@ impl HostConfig {
                 "server_port must be less than 1000, got {}",
                 cfg.server_port
             );
+        }
+
+        // Validate all workload selectors
+        for (vm_name, vm) in &cfg.vms {
+            for (workload_name, policy) in &vm.identities {
+                policy.parse_selector().map_err(|e| {
+                    anyhow::anyhow!("VM '{}' workload '{}' selector error: {}", vm_name, workload_name, e)
+                })?;
+            }
         }
 
         Ok(cfg)

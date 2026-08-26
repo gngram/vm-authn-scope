@@ -2,23 +2,21 @@
 //!
 //! Loaded from a JSON file (default: `/etc/authn-scope/agent.json`).
 
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 /// Top-level agent configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// Name of the VM (sent in CertRequest to identify the caller).
+    /// Name of the VM (sent in Handshake/CertRequest to identify the caller).
     pub vm_name: String,
     /// vsock port the server listens on (should be < 1000).
     #[serde(default = "default_server_port")]
     pub server_port: u32,
-    /// List of identities (services/processes) to request certificates for.
-    pub identities: Vec<IdentityEntry>,
     /// The client port to bind to when dialing.
     #[serde(default = "default_client_port")]
     pub client_port: u32,
+    /// Optional path to the Unix Domain Socket for the Workload API.
+    pub workload_api_socket: Option<String>,
 }
 
 fn default_server_port() -> u32 {
@@ -27,36 +25,6 @@ fn default_server_port() -> u32 {
 
 fn default_client_port() -> u32 {
     901
-}
-
-/// Configuration for a single identity that needs a certificate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IdentityEntry {
-    /// Identity name — must match the name registered in the host config.
-    pub name: String,
-    /// Destination path for the signed certificate PEM.
-    pub cert_path: PathBuf,
-    /// Destination path for the private key PEM.
-    pub key_path: PathBuf,
-    /// Destination path for the CA certificate PEM.
-    pub ca_path: PathBuf,
-    /// Unix user account for the written files (requires agent runs as root).
-    pub owner_user: String,
-    /// Unix group name for the written files.
-    pub owner_group: String,
-    /// Unix permission mode for the certificate file (e.g. "0640").
-    #[serde(default = "default_cert_mode")]
-    pub cert_mode: String,
-    /// Unix permission mode for the private key file (e.g. "0600").
-    #[serde(default = "default_key_mode")]
-    pub key_mode: String,
-}
-
-fn default_cert_mode() -> String {
-    "0640".into()
-}
-fn default_key_mode() -> String {
-    "0600".into()
 }
 
 impl AgentConfig {

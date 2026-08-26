@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 authn-scope-proto = { workspace = true }
+authn-scope-workload = { workspace = true }
 tokio            = { workspace = true }
 tokio-vsock      = { workspace = true }
 rcgen            = { workspace = true }
@@ -24,3 +25,4 @@ libc             = "0.2"
 vsock            = "0.4"
 uzers            = "0.12"
 rustix           = { version = "0.38", features = ["fs"] }
+x509-parser      = { workspace = true }

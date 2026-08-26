@@ -5,6 +5,9 @@ members = [
     "apps/rust-apps/authn-scope-server",
     "apps/rust-apps/authn-scope-agent",
     "libs/rust-libs/authn-scope-evaluator",
+    "libs/rust-libs/authn-scope-workload",
+    "apps/rust-apps/workload-test-workload",
+    "apps/rust-apps/profiler",
 ]
 resolver = "2"
 
@@ -40,7 +43,11 @@ anyhow    = "1"
 # Base64url for JWT encoding
 base64 = "0.22"
 
+# Time operations for cert validity/rotation
+time = "0.3"
+
 
 # Workspace-internal crates
 authn-scope-proto = { path = "libs/rust-libs/authn-scope-proto" }
 authn-scope-ca    = { path = "libs/rust-libs/authn-scope-ca" }
+authn-scope-workload = { path = "libs/rust-libs/authn-scope-workload" }

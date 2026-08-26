@@ -1,0 +1,13 @@
+[package]
+name    = "workload-test-workload"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "workload-test-workload"
+path = "src/main.rs"
+
+[dependencies]
+authn-scope-workload = { workspace = true }
+tokio                = { workspace = true }
+anyhow               = { workspace = true }

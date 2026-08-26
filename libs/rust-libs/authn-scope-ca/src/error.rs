@@ -30,14 +30,8 @@ pub enum CaError {
     #[error("ring crypto error: {0}")]
     RingError(String),
 
-    #[error("JWT build error: {0}")]
-    JwtError(String),
-
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("serialisation error: {0}")]
-    SerdeError(#[from] serde_json::Error),
 }
 
 impl From<ring::error::Unspecified> for CaError {

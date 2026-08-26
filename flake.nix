@@ -43,10 +43,17 @@
       # You can reference treefmtEval.config.build.wrapper here if you'd like to append it to your devShell path inside develop.nix
     };
 
-    checks.${system}.vm-test = import ./nix/checks/vm-test.nix {
-      inherit pkgs;
-      nixosModules = self.nixosModules;
-      inherit authScope authScopeGo;
+    checks.${system} = {
+      vm-test = import ./nix/checks/vm-test.nix {
+        inherit pkgs;
+        nixosModules = self.nixosModules;
+        inherit authScope authScopeGo;
+      };
+
+      profiler-test = import ./nix/checks/profiler-test.nix {
+        inherit pkgs;
+        inherit authScope;
+      };
     };
   };
 }

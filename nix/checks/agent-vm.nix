@@ -1,31 +1,77 @@
-# my-vm.nix
-# This is a standard NixOS configuration, just like your system's configuration.nix
+# agent-vm.nix
+# NixOS VM configuration for the integration test guest.
+# Boots as CID=3, connects to the host server over vsock, performs a handshake,
+# fetches certs for service-a via the Workload API, evaluates them and writes
+# "SUCCESS" / "FAILURE" to /workspace/test-result/result-summary then shuts down.
 {
   config,
   pkgs,
   ...
 }: let
-  authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
+  authScope   = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
   authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
+
+  evalTestScript = pkgs.writeShellScript "run-eval-test" ''
+    set -e
+    trap 'echo FAILUReeeE > /workspace/test-result/result-summary' ERR
+
+    # Ensure output directory is writable
+    mkdir -p /workspace/test-result
+
+    # Wait up to 30 s for the Workload API socket to appear
+    echo "==> Waiting for Workload API socket..."
+    for i in $(seq 1 30); do
+      [ -S /run/authn-scope/workload.sock ] && break
+      sleep 1
+    done
+    [ -S /run/authn-scope/workload.sock ] || { echo "Workload socket never appeared"; exit 1; }
+
+    echo "==> Fetching credentials via Workload API (as service-a)..."
+    # Use runuser (no PAM) to switch to service-a so the UNIX selector matches.
+    # workload-test-workload writes to /tmp/workload-cert-<USER>.pem
+    ${pkgs.util-linux}/bin/runuser -u service-a -- env USER=service-a \
+      ${authScope}/bin/workload-test-workload /run/authn-scope/workload.sock
+
+    # Copy the issued cert to the shared workspace for inspection
+    cp /tmp/workload-cert-service-a.pem /workspace/test-result/service-a-cert.pem
+    cp /tmp/workload-ca-service-a.pem   /workspace/test-result/ca-cert.pem
+
+    echo "==> Evaluating certificate (Rust)..."
+    ${authScope}/bin/authn-scope-eval-test \
+      /workspace/test-result/service-a-cert.pem \
+      /workspace/test-result/ca-cert.pem
+
+    echo "==> Evaluating certificate (Go)..."
+    ${authScopeGo}/bin/authn-scope-eval-test-go \
+      /workspace/test-result/service-a-cert.pem \
+      /workspace/test-result/ca-cert.pem
+
+    echo SUCCESS > /workspace/test-result/result-summary
+    echo "==> All tests passed! Shutting down VM."
+    poweroff -f
+  '';
 in {
   imports = [
     ../modules/authn-scope.nix
   ];
 
-  # Set a hostname for the VM
+  # --- Hostname ---
   networking.hostName = "authn-scope";
-  nix.settings.experimental-features = ["nix-command" "flakes"];
-  nix.nixPath = ["nixpkgs=${pkgs.path}"];
 
-  # --- User Accounts ---
-  # Create a user 'demo' with password 'nixos' so you can log in.
-  users.users.demo = {
+  users.users.nixos = {
     isNormalUser = true;
     initialPassword = "nixos";
     extraGroups = ["wheel"]; # For sudo access
   };
 
-  # Set the timezone to your current location for convenience
+  # --- User Accounts ---
+  # service-a system user so the agent's UNIX selector can match it
+  users.users.service-a = {
+    isSystemUser = true;
+    group        = "service-a";
+  };
+  users.groups.service-a = {};
+
   time.timeZone = "Asia/Dubai";
 
   # --- Shared Workspace & VSOCK Configuration ---
@@ -40,61 +86,34 @@ in {
     ];
   };
 
-  # --- VM-AuthN-Scope Agent Configuration ---
+  # --- Workload API socket directory ---
+  systemd.tmpfiles.rules = [
+    "d /run/authn-scope 0755 root root -"
+  ];
+
+  # --- Agent Configuration ---
   services.authn-scope.agent = {
-    enable = true;
+    enable  = true;
     package = authScope;
     settings = {
-      vm_name = "local-vm";
-      server_port = 900;
-      identities = [
-        {
-          name = "service-b";
-          cert_path = "/workspace/test-result/service-b-cert.pem";
-          key_path = "/workspace/test-result/service-b-key.pem";
-          ca_path = "/workspace/test-result/service-b-ca.pem";
-          owner_user = "root";
-          owner_group = "root";
-          cert_mode = "0644";
-          key_mode = "0600";
-        }
-        {
-          name = "service-a";
-          cert_path = "/workspace/test-result/service-a-cert.pem";
-          key_path = "/workspace/test-result/service-a-key.pem";
-          ca_path = "/workspace/test-result/service-a-ca.pem";
-          owner_user = "root";
-          owner_group = "root";
-          cert_mode = "0644";
-          key_mode = "0600";
-        }
-      ];
+      vm_name             = "local-vm";
+      server_port         = 900;
+      workload_api_socket = "/run/authn-scope/workload.sock";
     };
   };
 
-  # --- Evaluator Test Coordination Service ---
+  # --- Evaluator Test Service ---
+  # Runs as root so it can write to /workspace and call runuser for the workload fetch.
+  # On any error the ERR trap writes FAILURE and powers off the VM.
   systemd.services.authn-scope-evaluator-test = {
     description = "Run VM-AuthN-Scope Evaluator Test and Shutdown VM";
-    wantedBy = ["multi-user.target"];
-    after = ["authn-scope-agent.service"];
-    requires = ["authn-scope-agent.service"];
+    wantedBy    = ["multi-user.target"];
+    after       = ["authn-scope-agent.service" "network.target"];
+    requires    = ["authn-scope-agent.service"];
     serviceConfig = {
-      Type = "oneshot";
-      ExecStart = pkgs.writeShellScript "run-eval-test" ''
-        # Run tests and capture result
-        echo "==> Evaluating generated capabilities (Rust)..."
-        if ${authScope}/bin/authn-scope-eval-test \
-          /workspace/test-result/service-a-cert.pem \
-          /workspace/test-result/ca-cert.pem && \
-          echo "==> Evaluating generated capabilities (Go)..." && \
-          ${authScopeGo}/bin/authn-scope-eval-test-go \
-          /workspace/test-result/service-a-cert.pem \
-          /workspace/test-result/ca-cert.pem; then
-            echo "SUCCESS" > /workspace/test-result/result-summary
-        else
-            echo "FAILURE" > /workspace/test-result/result-summary
-        fi
-      '';
+      Type      = "oneshot";
+      User      = "root";
+      ExecStart = evalTestScript;
     };
   };
 

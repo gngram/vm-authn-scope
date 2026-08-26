@@ -34,46 +34,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("[Go Evaluator] Successfully verified capability JWT for Identity: %s\n", eval.Claim.Sub)
+	fmt.Printf("[Go Evaluator] Successfully verified certificate for Identity: %s\n", eval.Identity)
 
-	// Validate against the integration test configured capabilities in run_integration_test.sh
-	// The host configuration grants "service-a" the following:
-	// target_vm: local-vm
-	// rpc_modules: ["auth"]
-	// rpc_methods: ["data.read_secure"]
-	// paths: "/api/v1/health" with "read"
-
-	targetVM := "local-vm"
-
-	// 1. Should be allowed full module access
-	if !eval.CanCallRpc(targetVM, "auth", "login") {
-		fmt.Fprintf(os.Stderr, "Expected 'auth.login' to be allowed\n")
+	if eval.Identity != "service-a" {
+		fmt.Fprintf(os.Stderr, "Expected CN 'service-a', got '%s'\n", eval.Identity)
 		os.Exit(1)
 	}
 
-	// 2. Should be allowed specific method access
-	if !eval.CanCallRpc(targetVM, "data", "read_secure") {
-		fmt.Fprintf(os.Stderr, "Expected 'data.read_secure' to be allowed\n")
-		os.Exit(1)
-	}
-
-	// 3. Should be denied other methods
-	if eval.CanCallRpc(targetVM, "data", "write") {
-		fmt.Fprintf(os.Stderr, "Expected 'data.write' to be denied\n")
-		os.Exit(1)
-	}
-
-	// 4. Should be allowed specific path
-	if !eval.CanAccessPath(targetVM, "/api/v1/health", "read") {
-		fmt.Fprintf(os.Stderr, "Expected path '/api/v1/health' with 'read' to be allowed\n")
-		os.Exit(1)
-	}
-
-	// 5. Should be denied path with wrong mode
-	if eval.CanAccessPath(targetVM, "/api/v1/health", "write") {
-		fmt.Fprintf(os.Stderr, "Expected path '/api/v1/health' with 'write' to be denied\n")
-		os.Exit(1)
-	}
-
-	fmt.Println("[Go Evaluator] All capability tests passed!")
+	fmt.Println("[Go Evaluator] All tests passed!")
 }

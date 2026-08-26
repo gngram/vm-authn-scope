@@ -19,20 +19,23 @@
       "d /var/lib/service-c 0700 root root"
     ];
 
-    users.groups.service-a = {};
-    users.groups.service-b = {};
-    users.groups.service-c = {};
+    users.groups.service-a.gid = 997;
+    users.groups.service-b.gid = 998;
+    users.groups.service-c.gid = 999;
     users.users.service-a = {
       isSystemUser = true;
       group = "service-a";
+      uid = 997;
     };
     users.users.service-b = {
       isSystemUser = true;
       group = "service-b";
+      uid = 998;
     };
     users.users.service-c = {
       isSystemUser = true;
       group = "service-c";
+      uid = 999;
     };
 
     # Use our NixOS modules to configure authn-scope
@@ -46,31 +49,21 @@
         ca_cert_path = "/etc/authn-scope/ca/ca-cert.pem";
         ca_key_path = "/etc/authn-scope/ca/ca-key.pem";
         peer_port = 901;
-        cert_validity_days = 365;
         vms."local-vm" = {
           vm_cid = 1;
+          ip = "127.0.0.1";
           identities = {
             service-a = {
-              ip = "127.0.0.1";
-              caps = [
-                {
-                  target_vm = "local-vm";
-                  rpc_modules = ["auth"];
-                  rpc_methods = ["data.read_secure"];
-                  paths = [
-                    {
-                      path = "/api/v1/health";
-                      access = ["read"];
-                    }
-                  ];
-                }
-              ];
+              selector = "unix:user:service-a,unix:group:service-a,systemd:unitname:service-a";
+              ttl_minutes = 1;
             };
             service-b = {
-              caps = [];
+              selector = "unix:user:service-b,unix:group:service-b";
+              ttl_minutes = 10;
             };
             service-c = {
-              caps = [];
+              selector = "unix:user:service-c,unix:group:service-c";
+              ttl_minutes = 10;
             };
           };
         };
@@ -85,43 +78,26 @@
       settings = {
         vm_name = "local-vm";
         server_port = 900;
-        identities = [
-          {
-            name = "service-a";
-            cert_path = "/var/lib/service-a/cert.pem";
-            key_path = "/var/lib/service-a/key.pem";
-            ca_path = "/var/lib/service-a/ca.pem";
-            owner_user = "service-a";
-            owner_group = "service-a";
-            cert_mode = "0644";
-            key_mode = "0600";
-          }
-          {
-            name = "service-b";
-            cert_path = "/var/lib/service-b/cert.pem";
-            key_path = "/var/lib/service-b/key.pem";
-            ca_path = "/var/lib/service-b/ca.pem";
-            owner_user = "service-b";
-            owner_group = "service-b";
-            cert_mode = "0644";
-            key_mode = "0600";
-          }
-          {
-            name = "service-c";
-            cert_path = "/var/lib/service-c/cert.pem";
-            key_path = "/var/lib/service-c/key.pem";
-            ca_path = "/var/lib/service-c/ca.pem";
-            owner_user = "service-c";
-            owner_group = "service-c";
-            cert_mode = "0644";
-            key_mode = "0600";
-          }
-        ];
+        workload_api_socket = "/run/authn-scope/workload.sock";
       };
     };
 
     # Disable auto-start of the agent during the test so we can run it manually
     systemd.services.authn-scope-agent.wantedBy = lib.mkForce [];
+
+    systemd.services.service-a = {
+      description = "Service A Workload using Workload API";
+      wantedBy = [];
+      after = [ "authn-scope-agent.service" ];
+      serviceConfig = {
+        ExecStart = "${authScope}/bin/workload-test-workload /run/authn-scope/workload.sock --test-rotation";
+        User = "service-a";
+        Group = "service-a";
+        Type = "oneshot";
+        PrivateTmp = false;
+        Environment = "USER=service-a";
+      };
+    };
   };
 in
   pkgs.testers.runNixOSTest {
@@ -138,40 +114,44 @@ in
       # Start the agent service via systemctl
       machine.succeed("systemctl start authn-scope-agent.service")
 
-      # Wait for certificates to be created by the agent
-      machine.wait_for_file("/var/lib/service-a/cert.pem")
-      machine.wait_for_file("/var/lib/service-b/cert.pem")
-      machine.wait_for_file("/var/lib/service-c/cert.pem")
+      # Start the workload service and verify the Workload API dynamically issued credentials and rotation
+      with subtest("-- workload api test --"):
+          machine.wait_for_file("/run/authn-scope/workload.sock")
+          machine.succeed("systemctl start service-a.service")
+          
+          # Wait for the credentials to be written to /tmp by the workload
+          machine.wait_for_file("/tmp/workload-cert-service-a.pem")
+          
+          # Verify IP SAN is embedded in the dynamically requested workload cert
+          workload_cert_text = machine.succeed("openssl x509 -in /tmp/workload-cert-service-a.pem -noout -text")
+          assert "IP Address:127.0.0.1" in workload_cert_text
+          assert "CN=service-a" in workload_cert_text
 
-      output = machine.succeed("journalctl -u authn-scope-agent.service")
-      print(output)
+          # Wait for rotation test file confirming successful rotation at half-lifetime
+          machine.wait_for_file("/tmp/rotation-passed")
+          print("\033[94m" + "\n-- workload api test completed successfully (rotation verified) --\n" + "\033[0m")
 
-      # Verify certificates were created and have correct ownership
-      with subtest("-- get certificates test --"):
-          machine.succeed("ls -la /var/lib/service-a/cert.pem")
-          machine.succeed("ls -la /var/lib/service-b/cert.pem")
-          machine.succeed("ls -la /var/lib/service-c/cert.pem")
+      # Verify service-b and service-c using UNIX-only selectors
+      print("\n\n")
+      with subtest("-- service b and c verification --"):
+          machine.succeed("sudo -u service-b env USER=service-b workload-test-workload /run/authn-scope/workload.sock")
+          cert_b = machine.succeed("openssl x509 -in /tmp/workload-cert-service-b.pem -noout -text")
+          assert "CN=service-b" in cert_b
 
-          # Assert user/group ownership matches configured system accounts
-          assert "service-a:service-a" in machine.succeed("stat -c '%U:%G' /var/lib/service-a/cert.pem")
-          assert "service-b:service-b" in machine.succeed("stat -c '%U:%G' /var/lib/service-b/cert.pem")
-          assert "service-c:service-c" in machine.succeed("stat -c '%U:%G' /var/lib/service-c/cert.pem")
+          machine.succeed("sudo -u service-c env USER=service-c workload-test-workload /run/authn-scope/workload.sock")
+          cert_c = machine.succeed("openssl x509 -in /tmp/workload-cert-service-c.pem -noout -text")
+          assert "CN=service-c" in cert_c
+          print("\033[94m" + "-- service b and c verification completed successfully --" + "\033[0m")
 
-          # Verify IP SAN is embedded in service-a cert
-          cert_text = machine.succeed("openssl x509 -in /var/lib/service-a/cert.pem -noout -text")
-          assert "IP Address:127.0.0.1" in cert_text
-
-          print("\033[94m" + "\n-- get certificates test completed successfully --\n" + "\033[0m")
-
-      # Evaluate service-a's capabilities using the evaluator test binary
+      # Evaluate service-a's identity using the evaluator test binary
       print("\n\n")
       with subtest("-- capability eval test(rust) --"):
-          machine.succeed("authn-scope-eval-test /var/lib/service-a/cert.pem /etc/authn-scope/ca/ca-cert.pem")
+          machine.succeed("authn-scope-eval-test /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
           print("\033[94m" + "-- capability eval test(rust) completed successfully --" + "\033[0m")
 
       print("\n\n")
       with subtest("-- capability eval test(go) --"):
-          machine.succeed("authn-scope-eval-test-go /var/lib/service-a/cert.pem /etc/authn-scope/ca/ca-cert.pem")
+          machine.succeed("authn-scope-eval-test-go /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
           print("\033[94m" + "-- capability eval test(go) completed successfully --" + "\033[0m")
 
 

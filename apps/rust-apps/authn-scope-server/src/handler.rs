@@ -1,13 +1,7 @@
 //! Per-connection request handler.
-//!
-//! Each accepted vsock+TLS connection follows this flow:
-//!   1. Read a [`CertRequest`] frame.
-//!   2. Validate the claimed CID against the actual vsock peer CID.
-//!   3. Look up the CID+identity in the policy config.
-//!   4. Sign the CSR and embed capability claims.
-//!   5. Send a [`CertResponse`] frame.
 
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
@@ -18,15 +12,12 @@ use authn_scope_ca::{
 };
 use authn_scope_proto::{
     codec::{recv_json, send_json},
-    wire::{CertRequest, CertResponse, PROTOCOL_VERSION},
+    wire::{AgentRequest, AgentResponse, PROTOCOL_VERSION, WorkloadConfig},
 };
 
 use crate::{config::HostConfig, policy::resolve};
 
 /// Handle a single authenticated connection.
-///
-/// `peer_cid` is the actual vsock CID of the peer (from the kernel),
-/// used to cross-check the self-reported CID in the request.
 pub async fn handle_connection<IO>(
     mut stream: IO,
     peer_cid: u32,
@@ -39,10 +30,9 @@ pub async fn handle_connection<IO>(
         Ok(()) => {}
         Err(e) => {
             error!(peer_cid, error = %e, "Error handling connection");
-            // Best-effort error response.
             let _ = send_json(
                 &mut stream,
-                &CertResponse::Error {
+                &AgentResponse::Error {
                     message: e.to_string(),
                 },
             )
@@ -61,79 +51,144 @@ where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
     // Read request.
-    let req: CertRequest = recv_json(stream).await?;
+    let req: AgentRequest = recv_json(stream).await?;
 
-    // Protocol version check.
-    if req.version != PROTOCOL_VERSION {
-        let msg = format!(
-            "unsupported protocol version {} (expected {})",
-            req.version, PROTOCOL_VERSION
-        );
-        warn!(peer_cid, identity = %req.identity, "{}", msg);
-        send_json(stream, &CertResponse::Error { message: msg }).await?;
-        return Ok(());
-    }
+    match req {
+        AgentRequest::Handshake { version, vm_name } => {
+            if version != PROTOCOL_VERSION {
+                let msg = format!(
+                    "unsupported protocol version {} (expected {})",
+                    version, PROTOCOL_VERSION
+                );
+                warn!(peer_cid, vm_name = %vm_name, "{}", msg);
+                send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                return Ok(());
+            }
 
-    info!(
-        peer_cid,
-        identity = %req.identity,
-        "Received certificate request"
-    );
+            info!(peer_cid, vm_name = %vm_name, "Received agent handshake");
 
-    // Policy lookup.
-    let decision = match resolve(config, &req.vm_name, &req.identity) {
-        Some(d) => d,
-        None => {
-            let msg = format!(
-                "VM '{}' / identity '{}' not authorised",
-                req.vm_name, req.identity
-            );
-            warn!(peer_cid, vm_name = %req.vm_name, identity = %req.identity, "{}", msg);
-            send_json(stream, &CertResponse::Error { message: msg }).await?;
-            return Ok(());
+            let vm_entry = match config.vms.get(&vm_name) {
+                Some(entry) => entry,
+                None => {
+                    let msg = format!("VM '{}' not registered in host config", vm_name);
+                    warn!(peer_cid, vm_name = %vm_name, "{}", msg);
+                    send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                    return Ok(());
+                }
+            };
+
+            if vm_entry.vm_cid != peer_cid {
+                let msg = format!(
+                    "CID verification failed: expected {}, got peer CID {}",
+                    vm_entry.vm_cid, peer_cid
+                );
+                error!(peer_cid, vm_name = %vm_name, "{}", msg);
+                send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                return Ok(());
+            }
+
+            let mut workloads = HashMap::new();
+            for (name, policy) in &vm_entry.identities {
+                let validity_seconds = policy.ttl_minutes * 60;
+                let selector = match policy.parse_selector() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let msg = format!("failed to parse selector for workload '{}': {}", name, e);
+                        error!(peer_cid, vm_name = %vm_name, "{}", msg);
+                        send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                        return Ok(());
+                    }
+                };
+
+                workloads.insert(
+                    name.clone(),
+                    WorkloadConfig {
+                        selector,
+                        validity_seconds,
+                    },
+                );
+            }
+
+            send_json(stream, &AgentResponse::HandshakeOk { workloads }).await?;
+            info!(peer_cid, vm_name = %vm_name, "Handshake successful, sent workload selectors");
+            Ok(())
         }
-    };
+        AgentRequest::CertRequest {
+            version,
+            vm_name,
+            identity,
+            csr_pem,
+        } => {
+            if version != PROTOCOL_VERSION {
+                let msg = format!(
+                    "unsupported protocol version {} (expected {})",
+                    version, PROTOCOL_VERSION
+                );
+                warn!(peer_cid, identity = %identity, "{}", msg);
+                send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                return Ok(());
+            }
 
-    // Verify CID
-    if decision.vm_cid != peer_cid {
-        let msg = format!(
-            "CID verification failed for VM '{}': expected {}, got peer CID {}",
-            req.vm_name, decision.vm_cid, peer_cid
-        );
-        error!(peer_cid, vm_name = %req.vm_name, expected_cid = decision.vm_cid, "{}", msg);
-        // Immediately return error to close the connection without sending a response
-        return Err(anyhow::anyhow!("CID verification failed"));
+            info!(
+                peer_cid,
+                identity = %identity,
+                "Received certificate request"
+            );
+
+            // Policy lookup.
+            let decision = match resolve(config, &vm_name, &identity) {
+                Some(d) => d,
+                None => {
+                    let msg = format!(
+                        "VM '{}' / identity '{}' not authorised",
+                        vm_name, identity
+                    );
+                    warn!(peer_cid, vm_name = %vm_name, identity = %identity, "{}", msg);
+                    send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                    return Ok(());
+                }
+            };
+
+            // Verify CID
+            if decision.vm_cid != peer_cid {
+                let msg = format!(
+                    "CID verification failed for VM '{}': expected {}, got peer CID {}",
+                    vm_name, decision.vm_cid, peer_cid
+                );
+                error!(peer_cid, vm_name = %vm_name, expected_cid = decision.vm_cid, "{}", msg);
+                return Err(anyhow::anyhow!("CID verification failed"));
+            }
+
+            // Sign CSR.
+            let cert_pem = sign_csr(
+                ca,
+                SigningRequest {
+                    csr_pem: &csr_pem,
+                    identity: identity.clone(),
+                    vm_name: decision.vm_name,
+                    cid: peer_cid,
+                    ip: decision.ip,
+                    validity_seconds: decision.validity_seconds,
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("signing failed: {}", e))?;
+
+            info!(
+                peer_cid,
+                identity = %identity,
+                "Certificate issued successfully"
+            );
+
+            send_json(
+                stream,
+                &AgentResponse::CertOk {
+                    cert_pem,
+                    ca_cert_pem: ca.cert_pem.clone(),
+                },
+            )
+            .await?;
+
+            Ok(())
+        }
     }
-
-    // Sign CSR.
-    let cert_pem = sign_csr(
-        ca,
-        SigningRequest {
-            csr_pem: &req.csr_pem,
-            identity: req.identity.clone(),
-            vm_name: decision.vm_name,
-            cid: peer_cid,
-            claims: decision.caps,
-            ip: decision.ip,
-            validity_days: decision.validity_days,
-        },
-    )
-    .map_err(|e| anyhow::anyhow!("signing failed: {}", e))?;
-
-    info!(
-        peer_cid,
-        identity = %req.identity,
-        "Certificate issued successfully"
-    );
-
-    send_json(
-        stream,
-        &CertResponse::Ok {
-            cert_pem,
-            ca_cert_pem: ca.cert_pem.clone(),
-        },
-    )
-    .await?;
-
-    Ok(())
 }

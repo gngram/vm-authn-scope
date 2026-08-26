@@ -6,87 +6,39 @@
   "vms": {
     "vm-frontend": {
       "vm_cid": 42,
+      "ip": "10.0.0.5",
       "identities": {
         "frontend-api": {
-          "caps": [
-            {
-              "target_vm": "vm-backend",
-              "rpc_modules": [
-                "auth",
-                "storage"
-              ],
-              "rpc_methods": [
-                "auth.login",
-                "auth.logout",
-                "storage.read"
-              ],
-              "paths": [
-                {
-                  "path": "/api/v1/data",
-                  "access": [
-                    "read"
-                  ]
-                },
-                {
-                  "path": "/api/v1/files",
-                  "access": [
-                    "read",
-                    "write"
-                  ]
-                }
-              ]
+          "selector": {
+            "unix": {
+              "uid_gid": "1000:1000",
+              "bin-path": "/usr/local/bin/frontend-api"
+            },
+            "systemd": {
+              "unitname": "frontend-api.service"
             }
-          ],
-          "validity_days": 365
+          },
+          "validity_seconds": 3600
         },
         "metrics-collector": {
-          "caps": [
-            {
-              "target_vm": "vm-backend",
-              "rpc_modules": [
-                "metrics"
-              ],
-              "rpc_methods": [
-                "metrics.push"
-              ],
-              "paths": [
-                {
-                  "path": "/metrics/push",
-                  "access": [
-                    "write"
-                  ]
-                }
-              ]
+          "selector": {
+            "unix": {
+              "uid_gid": "999:999"
             }
-          ]
+          }
         }
       }
     },
     "vm-backend": {
       "vm_cid": 10,
+      "ip": "10.0.0.6",
       "identities": {
         "backend-db": {
-          "caps": [
-            {
-              "target_vm": "vm-storage",
-              "rpc_modules": [
-                "db"
-              ],
-              "rpc_methods": [
-                "db.query",
-                "db.exec"
-              ],
-              "paths": [
-                {
-                  "path": "/db/query",
-                  "access": [
-                    "read",
-                    "write"
-                  ]
-                }
-              ]
+          "selector": {
+            "systemd": {
+              "unitname": "postgres.service"
             }
-          ]
+          }
         }
       }
     }
