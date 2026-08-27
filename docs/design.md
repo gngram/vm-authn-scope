@@ -1,11 +1,10 @@
-# VM-AuthN-Scope: vsock Certificate Authority — Design Document
+# VM-AuthN-Scope: vsock Certificate Authority & Workload API — Design Document
 
 ## Overview
 
-A pure-Rust (no OpenSSL/C dependency) PKI system for multi-VM Linux environments.
-The **host CA** issues X.509 certificates over vsock, embedding capability claims (RBAC/CBAC) as a
-custom X.509 extension encoded as a JSON Web Token (JWT)-style structure.
-Each **guest VM** runs an agent that requests certificates on behalf of local identities (services/processes).
+A pure-Rust (zero OpenSSL/C crypto library) PKI and attestation system for multi-VM Linux environments.
+The **host CA** issues X.509 certificates over vsock with mutual hardware-backed trust established via **vTPM attestation** and **host TPM configuration sealing**.
+Each **guest VM** runs an agent that authenticates with the host CA and exposes a local **Workload API** (over a Unix Domain Socket) to provision ephemeral X.509 certificates to local processes based on fine-grained process selectors.
 
 ---
 
@@ -13,13 +12,15 @@ Each **guest VM** runs an agent that requests certificates on behalf of local id
 
 | Scope | Implementation |
 | --- | --- |
-| Key algorithm | ECDSA P-256 |
-| vsock transport | Plain vsock (no TLS wrapper) |
-| Certificate requests | One-shot (requested and stored on startup) |
-| CA key | Plain PEM PKCS#8 |
-| Cap JWT signature | Signed using the same CA private key |
+| Key algorithm | ECDSA P-256 (Leaf & CA) |
+| vsock transport | Length-prefixed JSON framing over vsock |
+| Trust Establishment | vTPM remote attestation (TPM2_Quote over PCRs 0, 1, 2, 3, 7) with TOFU |
+| Config & State Integrity | Immutable Nix Store for `host.json` + Host TPM sealing of `known_vms.json` |
+| Credential Delivery | On-demand via local Workload API Unix Domain Socket (no disk storage) |
+| Credential Rotation | Automatic in-memory rotation at 50% certificate TTL (`ttl_minutes / 2`) |
 | Key generation | `--genkey` CLI flag (regenerates/overwrites CA keys and starts server in a single step) |
-| Server privilege enforcement | Requires root privilege to run (due to vsock binding constraints) |
+| Process Attestation | Linux peer credentials (`SO_PEERCRED`), `/proc/<pid>/exe`, and `/proc/<pid>/cgroup` |
+| Server privilege enforcement | Requires root privilege to run (due to vsock bind constraints) |
 
 ---
 
@@ -27,78 +28,149 @@ Each **guest VM** runs an agent that requests certificates on behalf of local id
 
 ![System Architecture Diagram #S#R](architecture_diagram.jpg)
 
+### Complete Attestation & Certificate Issuance Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Workload as Workload (Process)
+    participant Agent as Guest Agent (authn-scope-agent)
+    participant vTPM as Guest vTPM (/dev/tpmrm0)
+    participant Server as Host CA (authn-scope-server)
+    participant HostTPM as Host TPM (/dev/tpmrm0)
+
+    %% PHASE 1: Host Server Startup & Initialization
+    rect rgb(240, 245, 255)
+    Note over Server,HostTPM: Phase 1: Host Server Startup & Initialization
+    Server->>Server: Read immutable host.json from Nix Store (/nix/store/...)
+    Server->>HostTPM: Verify/Unseal known_vms.json hash from Host TPM (known_vms_seal.json)
+    Server->>Server: Initialize ECDSA P-256 Root CA & bind vsock:900
+    end
+
+    %% PHASE 2: Guest Boot & Attestation Handshake
+    rect rgb(245, 255, 245)
+    Note over Agent,Server: Phase 2: Guest Boot & Hardware-Backed Attestation (TOFU)
+    Agent->>vTPM: Create/Load Attestation Key (AK) at handle 0x81010002
+    vTPM-->>Agent: Public AK (TPMT_PUBLIC)
+    Agent->>Server: Handshake { version: 2, vm_name: "local-vm", ak_pub } (vsock)
+    Server->>Server: Verify caller CID=3 & generate 32-byte secure random nonce
+    Server-->>Agent: AttestationChallenge { nonce }
+    Agent->>vTPM: TPM2_Quote(AK, nonce, PCRs 0, 1, 2, 3, 7)
+    vTPM-->>Agent: TPMS_ATTEST + RSA signature
+    Agent->>Server: AttestationResponse { attest, signature }
+    Server->>Server: Verify quote RSA signature & nonce (pure Rust)
+    Server->>Server: Check/Record PCRs in known_vms.json (TOFU)
+    Server-->>Agent: HandshakeOk { workloads: [service-a, service-b] }
+    Agent->>Agent: Bind protect listener to client port 901 & serve UDS /run/authn-scope/workload.sock
+    end
+
+    %% PHASE 3: On-Demand Credential Issuance
+    rect rgb(255, 250, 240)
+    Note over Workload,Server: Phase 3: Workload Authentication & Certificate Issuance
+    Workload->>Agent: Connect to /run/authn-scope/workload.sock {"type": "fetch"}
+    Agent->>Agent: Inspect caller credentials (SO_PEERCRED, /proc/pid/exe, /proc/pid/cgroup)
+    Agent->>Agent: Match selectors -> resolve identity "service-a"
+    Agent->>Agent: Generate ephemeral ECDSA P-256 key pair & PKCS#10 CSR
+    Agent->>Server: CertRequest { vm_name: "local-vm", identity: "service-a", csr_pem } (from port 901)
+    Server->>Server: Validate identity authorized for CID=3 & sign leaf cert (TTL + IP SAN)
+    Server-->>Agent: CertOk { cert_pem, ca_cert_pem }
+    Agent->>Agent: Cache credentials in memory & re-bind port 901 listener
+    Agent-->>Workload: WorkloadResponse { cert_pem, key_pem, ca_cert_pem }
+    end
+
+    %% PHASE 4: Credential Rotation
+    rect rgb(250, 240, 255)
+    Note over Workload,Agent: Phase 4: Automatic In-Memory Credential Rotation
+    Workload->>Workload: Background rotation loop triggers at 50% TTL
+    Workload->>Agent: Connect to /run/authn-scope/workload.sock {"type": "fetch"}
+    Agent->>Server: Request renewed certificate from Host CA
+    Server-->>Agent: CertOk { new_cert_pem, ca_cert_pem }
+    Agent-->>Workload: Return rotated in-memory credentials
+    end
+```
+
 ---
 
 ## Wire Protocol
 
-A simple length-prefixed JSON protocol over the vsock channel:
+A length-prefixed JSON protocol over the vsock channel:
 
 ```
 [4-byte big-endian length][JSON payload bytes]
 ```
 
-### CertRequest (agent → server)
+### 1. Handshake Request (agent → server)
 
 ```json
 {
-  "version": 1,
-  "Identity": "service-a",
+  "type": "handshake",
+  "version": 2,
+  "vm_name": "local-vm",
+  "ak_pub": "<base64-encoded TPMT_PUBLIC bytes>"
+}
+```
+
+### 2. Attestation Challenge (server → agent)
+
+```json
+{
+  "status": "attestation_challenge",
+  "nonce": "<base64-encoded 32-byte random nonce>"
+}
+```
+
+### 3. Attestation Response (agent → server)
+
+```json
+{
+  "type": "attestation_response",
+  "attest": "<base64-encoded TPMS_ATTEST bytes>",
+  "signature": "<base64-encoded TPMT_SIGNATURE bytes>"
+}
+```
+
+### 4. Handshake Response (server → agent)
+
+```json
+{
+  "status": "handshakeok",
+  "workloads": {
+    "service-a": {
+      "selector": {
+        "unix": {
+          "user": "service-a",
+          "group": "service-a",
+          "bin-path": "/usr/local/bin/service-a"
+        },
+        "systemd": {
+          "unitname": "service-a"
+        }
+      },
+      "validity_seconds": 600
+    }
+  }
+}
+```
+
+### 5. On-Demand CertRequest (agent → server)
+
+```json
+{
+  "type": "cert_request",
+  "version": 2,
+  "vm_name": "local-vm",
+  "identity": "service-a",
   "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\n..."
 }
 ```
 
-### CertResponse (server → agent)
+### 6. CertResponse (server → agent)
 
 ```json
 {
-  "status": "ok",
+  "status": "certok",
   "cert_pem": "-----BEGIN CERTIFICATE-----\n...",
   "ca_cert_pem": "-----BEGIN CERTIFICATE-----\n..."
-}
-```
-
-or on error:
-
-```json
-{
-  "status": "error",
-  "message": "CID not authorized"
-}
-```
-
----
-
-## Capability / JWT Claim Structure
-
-Capabilities are embedded as a **custom X.509 extension** (OID `1.3.6.1.4.1.99999.1`)
-whose value is a compact JWT signed by the CA's private key.
-
-### JWT Header
-
-```json
-{ "alg": "ES256", "typ": "CAP" }
-```
-
-### JWT Payload
-
-```json
-{
-  "iss": "authn-scope-ca",
-  "sub": "service-a",
-  "vm":  "local-vm",
-  "cid": 3,
-  "iat": 1700000000,
-  "exp": 1731536000,
-  "caps": [
-    {
-      "target_vm":  "local-vm",
-      "rpc_modules": ["auth"],
-      "rpc_methods": ["data.read_secure"],
-      "paths": [
-        { "path": "/api/v1/health", "access": ["read"] }
-      ]
-    }
-  ]
 }
 ```
 
@@ -114,22 +186,21 @@ whose value is a compact JWT signed by the CA's private key.
   "ca_key_path": "/etc/authn-scope/ca/ca-key.pem",
   "server_port": 900,
   "peer_port": 901,
-  "cert_validity_days": 365,
   "vms": {
     "local-vm": {
       "vm_cid": 3,
+      "ip": "127.0.0.1",
+      "attestation": {
+        "required": true
+      },
       "identities": {
         "service-a": {
-          "caps": [
-            {
-              "target_vm": "local-vm",
-              "rpc_modules": ["auth"],
-              "rpc_methods": ["data.read_secure"],
-              "paths": [
-                { "path": "/api/v1/health", "access": ["read"] }
-              ]
-            }
-          ]
+          "selector": "unix:user:service-a,unix:group:service-a,systemd:unitname:service-a",
+          "ttl_minutes": 10
+        },
+        "service-b": {
+          "selector": "unix:user:service-b,unix:group:service-b",
+          "ttl_minutes": 60
         }
       }
     }
@@ -144,18 +215,7 @@ whose value is a compact JWT signed by the CA's private key.
   "vm_name": "local-vm",
   "server_port": 900,
   "client_port": 901,
-  "identities": [
-    {
-      "name": "service-a",
-      "cert_path": "/var/lib/service-a/cert.pem",
-      "key_path": "/var/lib/service-a/key.pem",
-      "ca_path": "/var/lib/service-a/ca.pem",
-      "owner_uid": 0,
-      "owner_gid": 0,
-      "cert_mode": "0644",
-      "key_mode": "0600"
-    }
-  ]
+  "workload_api_socket": "/run/authn-scope/workload.sock"
 }
 ```
 
@@ -163,50 +223,14 @@ whose value is a compact JWT signed by the CA's private key.
 
 ## Secure Port Binding & Verification
 
-Unlike standard TCP/IP networks, vsock does not natively enforce privileged vsock ports (e.g. binding ports under 1024) across all kernel distributions. Any unprivileged process running inside the Guest VM or Host could theoretically attempt to bind to a designated port.
-
-To eliminate this vulnerability, the system implements a robust verification mechanism:
-
 1. **Client Port (Peer) Verification**:
-   When the server accepts a connection, it extracts the peer address and verifies the client source port (`peer_addr.port()`). The server requires the client to bind to a specific, configured client port (configured via `peer_port`, defaulting to `901`). Connections originating from any other source ports are immediately terminated, preventing spoofing or malicious local processes from bypassing the agent.
+   When the server accepts a connection, it verifies the client source port (`peer_addr.port()`). The server requires the client to bind to `peer_port` (default `901`). Connections from other ports are rejected.
 2. **Server-Side Privilege Verification**:
-   The server daemon binds to a low-numbered port (configured via `server_port`, defaulting to `900`). The kernel limits bindings on these ports to privileged processes running as `root`.
-3. **VM IdIdentity Matching**:
-   The guest agent sends its expected `vm_name` in the certificate request. The server looks up this VM in its configurations and validates that the connection's source CID matches the registered `vm_cid` of that VM.
-
-> [!IMPORTANT]
-> **Early Service Startup Recommendation**:
-> To prevent malicious or unprivileged user-space processes from hijacking the designated ports, it is highly recommended to run both the server and the guest agent as early systemd services (triggered immediately when `/dev/vsock` is initialized). By binding to the designated ports early in the boot cycle, the services secure them and prevent any subsequent processes from binding to them.
-
----
-
-## Early Service Startup with /dev/vsock in NixOS
-
-To ensure the VM-AuthN-Scope agent and server initialize as early as possible during the guest VM boot process, the services do not wait for standard network targets. Instead, they dynamically bind to the existence of the guest kernel's virtual socket device node `/dev/vsock`.
-
-### 1. Udev Device Tagging
-
-A custom udev rule matches the vsock driver load and tags the device node with `systemd`:
-
-```udev
-KERNEL=="vsock", TAG+="systemd"
-```
-
-This instructs systemd to monitor the device and create a standard dependency unit called `dev-vsock.device` as soon as `/dev/vsock` is initialized by the kernel.
-
-### 2. Service Bindings
-
-Both the server and guest agent services declare explicit systemd dependencies:
-
-```ini
-[Unit]
-BindsTo=dev-vsock.device
-After=dev-vsock.device
-```
-
-This ensures the services are started immediately when the virtualization channel is available, allowing early credential provisioning.
-
-By default, the host CID is a fixed system constant (`2`, representing the hypervisor/host). To support local testing or custom loopback environments, developers can override this value by setting the `VSOCK_HOST_CID` environment variable (e.g. `VSOCK_HOST_CID=1`).
+   The server daemon binds to a low-numbered port (`server_port`, default `900`). The kernel limits bindings on these ports to privileged processes running as `root`.
+3. **VM Identity Matching**:
+   The guest agent sends its expected `vm_name` in the handshake request. The server looks up this VM and validates that the connection's source CID matches `vm_cid`.
+4. **vTPM Hardware Attestation**:
+   The guest proves its boot integrity by signing PCR measurements (0, 1, 2, 3, 7) with its TPM Attestation Key.
 
 ---
 
@@ -219,22 +243,29 @@ authn-scope/
 │
 ├── libs/
 │   ├── rust-libs/
-│   │   ├── authn-scope-proto/ # shared wire types, capability structures & codecs
-│   │   ├── authn-scope-ca/    # CA key/cert generation, signing, and JWT creation
-│   │   └── authn-scope-evaluator/ # capability validation utilities
+│   │   ├── authn-scope-proto/     # wire types, framing codecs, protocol versions
+│   │   ├── authn-scope-ca/        # pure-Rust CA engine, CSR signing
+│   │   ├── authn-scope-tpm/       # TPM 2.0 AK management, quote verification, sealing
+│   │   ├── authn-scope-workload/  # Rust client library for Workload API
+│   │   └── authn-scope-evaluator/ # certificate verification library
 │   └── go-libs/
-│       └── authn-scope-evaluator/ # capability validation utilities (Go version)
+│       ├── authn-scope-workload/  # Go client library for Workload API
+│       └── authn-scope-evaluator/ # Go certificate verification library
 │
 └── apps/
     └── rust-apps/
-        ├── authn-scope-server/ # host CA daemon
-        └── authn-scope-agent/  # guest agent
+        ├── authn-scope-server/        # host CA daemon with TPM sealing & attestation
+        ├── authn-scope-agent/         # guest agent with Workload API & vTPM quote
+        ├── workload-test-workload/    # test workload for rotation verification
+        └── profiler/                  # memory and latency profiling benchmark
 ```
 
 ---
 
-## CA Key Management
+## References & Further Reading
 
-- Running `authn-scope-server` with `--genkey` generates a self-signed P-256 Root CA keypair using `rcgen`.
-- If keys already exist at the paths specified in `/etc/authn-scope/host.json`, they are automatically removed and regenerated before starting the listener.
-- If `--genkey` is omitted, the server attempts to load existing keys. If they do not exist, it throws an error and exits immediately.
+* [Threat Model & Attack Analysis](threat_model.md)
+* [Server Configuration Reference](server_configuration.md)
+* [Agent Configuration Reference](agent_configuration.md)
+* [Rust Workload API Guide](api_rust.md)
+* [Go Workload API Guide](api_go.md)

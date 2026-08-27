@@ -1,6 +1,8 @@
 {
   lib,
   rustPlatform,
+  pkg-config,
+  tpm2-tss,
 }: let
   cleanSrc = lib.cleanSourceWith {
     src = ../../.;
@@ -20,5 +22,7 @@ in
     version = "0.1.0";
     src = cleanSrc;
     cargoLock.lockFile = ../../Cargo.lock;
+    nativeBuildInputs = [pkg-config];
+    buildInputs = [tpm2-tss];
     doCheck = false;
   }

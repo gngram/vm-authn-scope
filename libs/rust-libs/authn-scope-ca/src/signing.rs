@@ -40,6 +40,11 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     let mut csr_params = CertificateSigningRequestParams::from_pem(req.csr_pem)
         .map_err(|e| CaError::RcgenError(e))?;
 
+    // Set Subject CommonName to identity.
+    let mut dn = rcgen::DistinguishedName::new();
+    dn.push(rcgen::DnType::CommonName, req.identity.clone());
+    csr_params.params.distinguished_name = dn;
+
     // Set leaf-cert key usages to digitalSignature only.
     csr_params.params.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,

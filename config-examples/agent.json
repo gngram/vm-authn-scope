@@ -2,26 +2,5 @@
   "vm_name": "vm-frontend",
   "server_port": 900,
   "client_port": 901,
-  "identities": [
-    {
-      "name": "frontend-api",
-      "cert_path": "/etc/frontend-api/tls/cert.pem",
-      "key_path": "/etc/frontend-api/tls/key.pem",
-      "ca_path": "/etc/frontend-api/tls/ca.pem",
-      "owner_uid": 1001,
-      "owner_gid": 1001,
-      "cert_mode": "0640",
-      "key_mode": "0600"
-    },
-    {
-      "name": "metrics-collector",
-      "cert_path": "/etc/metrics-collector/tls/cert.pem",
-      "key_path": "/etc/metrics-collector/tls/key.pem",
-      "ca_path": "/etc/metrics-collector/tls/ca.pem",
-      "owner_uid": 1002,
-      "owner_gid": 1002,
-      "cert_mode": "0640",
-      "key_mode": "0600"
-    }
-  ]
+  "workload_api_socket": "/run/authn-scope/workload.sock"
 }

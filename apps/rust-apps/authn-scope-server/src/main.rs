@@ -13,16 +13,19 @@
 use std::{path::PathBuf, process, sync::Arc};
 
 use clap::Parser;
+use tokio::sync::Mutex;
 use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use authn_scope_ca::CertificateAuthority;
 
+mod attestation;
 mod config;
 mod handler;
 mod listener;
 mod policy;
 
+use attestation::KnownVms;
 use config::HostConfig;
 
 /// authn-scope host CA server.
@@ -45,11 +48,15 @@ struct Cli {
     /// Generate the CA key and certificate (overwriting existing ones if they exist) before starting the server.
     #[arg(long)]
     genkey: bool,
+
+    /// Reset stored attestation state for the specified VM (allowing TOFU re-learning).
+    #[arg(long, value_name = "VM_NAME")]
+    reset_attestation: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
-    // Initialise structured logging.  Level can be overridden via RUST_LOG.
+    // Initialise structured logging. Level can be overridden via RUST_LOG.
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -65,11 +72,41 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // Handle --reset-attestation
+    if let Some(ref vm_name) = cli.reset_attestation {
+        let mut known = match KnownVms::load() {
+            Ok(k) => k,
+            Err(e) => {
+                error!(error = %e, "Failed to load attestation state");
+                process::exit(1);
+            }
+        };
+        if known.reset(vm_name) {
+            if let Err(e) = known.save() {
+                error!(error = %e, "Failed to save attestation state");
+                process::exit(1);
+            }
+            info!(vm_name = %vm_name, "Attestation state reset successfully. Next connection will re-learn PCRs.");
+        } else {
+            info!(vm_name = %vm_name, "No attestation state found for VM.");
+        }
+        return;
+    }
+
     // Load config.
     let cfg = match HostConfig::from_file(&cli.config) {
         Ok(c) => c,
         Err(e) => {
             error!(config = %cli.config.display(), error = %e, "Failed to load config");
+            process::exit(1);
+        }
+    };
+
+    // Load attestation state (TOFU)
+    let known_vms = match KnownVms::load() {
+        Ok(k) => Arc::new(Mutex::new(k)),
+        Err(e) => {
+            error!(error = %e, "Failed to load attestation state");
             process::exit(1);
         }
     };
@@ -99,7 +136,7 @@ async fn main() {
     let cfg = Arc::new(cfg);
     let ca = Arc::new(ca);
 
-    if let Err(e) = listener::run_listener(cfg, ca).await {
+    if let Err(e) = listener::run_listener(cfg, ca, known_vms).await {
         error!(error = %e, "Listener terminated with error");
         process::exit(1);
     }

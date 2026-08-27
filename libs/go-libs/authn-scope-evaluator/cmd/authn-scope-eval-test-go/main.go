@@ -8,8 +8,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <peer-cert.pem> <ca-cert.pem>\n", os.Args[0])
+	if len(os.Args) < 3 || len(os.Args) > 4 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <peer-cert.pem> <ca-cert.pem> [expected-identity]\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -36,9 +36,17 @@ func main() {
 
 	fmt.Printf("[Go Evaluator] Successfully verified certificate for Identity: %s\n", eval.Identity)
 
-	if eval.Identity != "service-a" {
-		fmt.Fprintf(os.Stderr, "Expected CN 'service-a', got '%s'\n", eval.Identity)
-		os.Exit(1)
+	if len(os.Args) == 4 {
+		expected := os.Args[3]
+		if eval.Identity != expected {
+			fmt.Fprintf(os.Stderr, "Expected CN '%s', got '%s'\n", expected, eval.Identity)
+			os.Exit(1)
+		}
+	} else {
+		if eval.Identity == "" {
+			fmt.Fprintf(os.Stderr, "Identity is empty\n")
+			os.Exit(1)
+		}
 	}
 
 	fmt.Println("[Go Evaluator] All tests passed!")

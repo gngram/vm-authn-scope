@@ -72,7 +72,7 @@ mod tests {
 
         // 2. Mock Agent CSR
         let agent_key = KeyPair::generate().unwrap();
-        let params = CertificateParams::default();
+        let params = CertificateParams::new(vec!["peer-service".to_string()]).unwrap();
         let csr_pem = params.serialize_request(&agent_key).unwrap().pem().unwrap();
 
         // 3. Server issues cert

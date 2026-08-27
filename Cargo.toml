@@ -2,6 +2,7 @@
 members = [
     "libs/rust-libs/authn-scope-proto",
     "libs/rust-libs/authn-scope-ca",
+    "libs/rust-libs/authn-scope-tpm",
     "apps/rust-apps/authn-scope-server",
     "apps/rust-apps/authn-scope-agent",
     "libs/rust-libs/authn-scope-evaluator",
@@ -19,7 +20,7 @@ rustls-pemfile = "2"
 
 # X.509 / CSR — pure Rust, uses ring internally
 # x509-parser is needed for from_ca_cert_pem and CertificateSigningRequestParams::from_pem
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.13", features = ["pem", "x509-parser", "ring"] }
 
 # Pure-Rust crypto primitives (ring is used by rcgen + rustls)
 ring = "0.17"
@@ -46,8 +47,11 @@ base64 = "0.22"
 # Time operations for cert validity/rotation
 time = "0.3"
 
+# TPM 2.0 support (agent-side: TPM operations; server-side: verification)
+tss-esapi = "7.7"
 
 # Workspace-internal crates
 authn-scope-proto = { path = "libs/rust-libs/authn-scope-proto" }
 authn-scope-ca    = { path = "libs/rust-libs/authn-scope-ca" }
 authn-scope-workload = { path = "libs/rust-libs/authn-scope-workload" }
+authn-scope-tpm   = { path = "libs/rust-libs/authn-scope-tpm" }

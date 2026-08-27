@@ -42,6 +42,18 @@ pub struct VmEntry {
     pub ip: Option<String>,
     /// Map of Workload name → Identity policy.
     pub identities: HashMap<String, IdentityPolicy>,
+    /// Optional vTPM attestation policy for this VM.
+    #[serde(default)]
+    pub attestation: Option<AttestationPolicy>,
+}
+
+/// vTPM attestation policy for a VM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationPolicy {
+    /// If true, the VM must present a valid TPM quote during handshake.
+    /// If false (or if the attestation block is absent), CID-only trust is used.
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// Policy for a single Workload running inside a VM.

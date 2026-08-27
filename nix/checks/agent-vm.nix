@@ -74,7 +74,9 @@ in {
 
   time.timeZone = "Asia/Dubai";
 
-  # --- Shared Workspace & VSOCK Configuration ---
+  # --- Shared Workspace & VSOCK / vTPM Configuration ---
+  environment.systemPackages = [pkgs.tpm2-tools];
+
   virtualisation.vmVariant = {
     virtualisation.sharedDirectories.workspace = {
       source = toString ./../..;
@@ -83,6 +85,9 @@ in {
 
     virtualisation.qemu.options = [
       "-device vhost-vsock-pci,guest-cid=3"
+      "-chardev socket,id=chrtpm,path=/tmp/swtpm-agent.sock"
+      "-tpmdev emulator,id=tpm0,chardev=chrtpm"
+      "-device tpm-tis,tpmdev=tpm0"
     ];
   };
 

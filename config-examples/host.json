@@ -2,43 +2,35 @@
   "ca_cert_path": "/etc/authn-scope/ca/ca-cert.pem",
   "ca_key_path": "/etc/authn-scope/ca/ca-key.pem",
   "server_port": 900,
-  "cert_validity_days": 365,
+  "peer_port": 901,
   "vms": {
     "vm-frontend": {
       "vm_cid": 42,
       "ip": "10.0.0.5",
+      "attestation": {
+        "required": true
+      },
       "identities": {
         "frontend-api": {
-          "selector": {
-            "unix": {
-              "uid_gid": "1000:1000",
-              "bin-path": "/usr/local/bin/frontend-api"
-            },
-            "systemd": {
-              "unitname": "frontend-api.service"
-            }
-          },
-          "validity_seconds": 3600
+          "selector": "unix:user:frontend,unix:group:frontend,unix:bin:/usr/local/bin/frontend-api,systemd:unitname:frontend-api.service",
+          "ttl_minutes": 60
         },
         "metrics-collector": {
-          "selector": {
-            "unix": {
-              "uid_gid": "999:999"
-            }
-          }
+          "selector": "unix:user:metrics,unix:group:metrics",
+          "ttl_minutes": 1440
         }
       }
     },
     "vm-backend": {
       "vm_cid": 10,
       "ip": "10.0.0.6",
+      "attestation": {
+        "required": false
+      },
       "identities": {
         "backend-db": {
-          "selector": {
-            "systemd": {
-              "unitname": "postgres.service"
-            }
-          }
+          "selector": "systemd:unitname:postgres.service",
+          "ttl_minutes": 1440
         }
       }
     }

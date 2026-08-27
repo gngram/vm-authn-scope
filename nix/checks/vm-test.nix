@@ -9,7 +9,7 @@
 
     # We need vsock loopback support
     boot.kernelModules = ["vsock_loopback"];
-    environment.systemPackages = [pkgs.time authScopeGo pkgs.openssl];
+    environment.systemPackages = [pkgs.time authScopeGo pkgs.openssl pkgs.swtpm pkgs.tpm2-tools];
 
     # CA Storage
     systemd.tmpfiles.rules = [
@@ -52,6 +52,9 @@
         vms."local-vm" = {
           vm_cid = 1;
           ip = "127.0.0.1";
+          attestation = {
+            required = false;
+          };
           identities = {
             service-a = {
               selector = "unix:user:service-a,unix:group:service-a,systemd:unitname:service-a";
@@ -154,6 +157,11 @@ in
           machine.succeed("authn-scope-eval-test-go /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
           print("\033[94m" + "-- capability eval test(go) completed successfully --" + "\033[0m")
 
+      # Test CLI flags for attestation reset
+      print("\n\n")
+      with subtest("-- test server CLI attestation reset --"):
+          machine.succeed("authn-scope-server --reset-attestation local-vm")
+          print("\033[94m" + "-- attestation reset CLI verified successfully --" + "\033[0m")
 
       print("\n\n")
       with subtest("-- get status of auth scope server --"):

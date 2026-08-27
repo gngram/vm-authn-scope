@@ -2,19 +2,21 @@
 
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
 use tokio_vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 use tracing::{error, info};
 
 use authn_scope_ca::CertificateAuthority;
 
-use crate::{config::HostConfig, handler::handle_connection};
+use crate::{attestation::KnownVms, config::HostConfig, handler::handle_connection};
 
-/// Start the vsock+TLS listener loop.
+/// Start the vsock listener loop.
 ///
 /// Runs until the process is terminated.
 pub async fn run_listener(
     config: Arc<HostConfig>,
     ca: Arc<CertificateAuthority>,
+    known_vms: Arc<Mutex<KnownVms>>,
 ) -> anyhow::Result<()> {
     let port = config.server_port;
 
@@ -42,9 +44,10 @@ pub async fn run_listener(
 
                 let config = Arc::clone(&config);
                 let ca = Arc::clone(&ca);
+                let known_vms = Arc::clone(&known_vms);
 
                 tokio::spawn(async move {
-                    handle_connection(stream, peer_cid, config, ca).await;
+                    handle_connection(stream, peer_cid, config, ca, known_vms).await;
                 });
             }
             Err(e) => {

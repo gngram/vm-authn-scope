@@ -203,7 +203,35 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(2); // VMADDR_CID_HOST
 
-    info!(vm_name = %config.vm_name, "Connecting to host CA to perform handshake...");
+    // Detect TPM if present
+    let tpm_info = match authn_scope_tpm::try_detect_tpm() {
+        Ok(tcti) => {
+            info!("TPM detected at {}", tcti);
+            match authn_scope_tpm::create_attestation_key(&tcti) {
+                Ok((ak_pub, ak_handle)) => {
+                    info!("Attestation key ready (handle 0x{:08x})", ak_handle);
+                    Some((tcti, ak_pub, ak_handle))
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create/load attestation key: {}", e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            info!("No TPM device detected ({}) - proceeding without TPM attestation", e);
+            None
+        }
+    };
+
+    let ak_pub_b64 = tpm_info.as_ref().map(|(_, ak, _)| base64_encode(&ak.public_bytes));
+    let version = if ak_pub_b64.is_some() {
+        authn_scope_proto::wire::PROTOCOL_VERSION_TPM
+    } else {
+        authn_scope_proto::wire::PROTOCOL_VERSION
+    };
+
+    info!(vm_name = %config.vm_name, has_tpm = tpm_info.is_some(), "Connecting to host CA to perform handshake...");
     let mut attempts = 0;
     let mut stream = loop {
         match connect_with_local_port(host_cid, config.server_port, config.client_port).await {
@@ -220,8 +248,9 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
     };
 
     let req = AgentRequest::Handshake {
-        version: PROTOCOL_VERSION,
+        version,
         vm_name: config.vm_name.clone(),
+        ak_pub: ak_pub_b64,
     };
     send_json(&mut stream, &req)
         .await
@@ -232,6 +261,46 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
         .context("receiving handshake response")?;
 
     match resp {
+        AgentResponse::AttestationChallenge { nonce } => {
+            info!("Received attestation challenge from host CA");
+            let (tcti, _ak_pub, ak_handle) = tpm_info
+                .ok_or_else(|| anyhow::anyhow!("Received attestation challenge but no TPM is available"))?;
+
+            let nonce_bytes = base64_decode(&nonce)?;
+            let quote = authn_scope_tpm::generate_quote(
+                &tcti,
+                ak_handle,
+                &nonce_bytes,
+                authn_scope_tpm::DEFAULT_ATTESTATION_PCRS,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to generate TPM quote: {}", e))?;
+
+            let attest_resp = AgentRequest::AttestationResponse {
+                attest: base64_encode(&quote.attest_bytes),
+                signature: base64_encode(&quote.signature_bytes),
+            };
+
+            send_json(&mut stream, &attest_resp)
+                .await
+                .context("sending attestation response")?;
+
+            let final_resp: AgentResponse = recv_json(&mut stream)
+                .await
+                .context("receiving post-attestation response")?;
+
+            match final_resp {
+                AgentResponse::HandshakeOk { workloads } => {
+                    info!("Attestation verified by host! Received {} workload configurations", workloads.len());
+                    Ok(workloads)
+                }
+                AgentResponse::Error { message } => {
+                    bail!("Attestation rejected by server: {}", message);
+                }
+                _ => {
+                    bail!("Unexpected post-attestation response from server");
+                }
+            }
+        }
         AgentResponse::HandshakeOk { workloads } => {
             info!("Handshake successful, received {} workload configurations", workloads.len());
             Ok(workloads)
@@ -610,4 +679,16 @@ fn get_cert_validity_seconds(cert_pem: &str) -> Result<u64> {
     } else {
         Ok(0)
     }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|e| anyhow::anyhow!("base64 decode error: {}", e))
 }
