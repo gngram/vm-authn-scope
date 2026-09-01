@@ -1,12 +1,12 @@
 //! authn-scope-workload — client library for requesting credentials over the Workload API.
 
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::RwLock;
-use tokio::time::{sleep, Duration};
-use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use tokio::time::{Duration, sleep};
 
 /// Ephemeral in-memory X.509 credentials returned by the Workload API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +60,12 @@ impl WorkloadClient {
     pub async fn fetch_credentials(&self) -> Result<X509Credentials> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
-            .with_context(|| format!("Failed to connect to Workload API socket at {}", self.socket_path))?;
+            .with_context(|| {
+                format!(
+                    "Failed to connect to Workload API socket at {}",
+                    self.socket_path
+                )
+            })?;
 
         let req = WorkloadRequest {
             req_type: "fetch".to_string(),
@@ -75,8 +80,8 @@ impl WorkloadClient {
             bail!("Workload API closed connection without sending a response");
         }
 
-        let resp: WorkloadResponse = serde_json::from_str(&line)
-            .context("Parsing WorkloadResponse")?;
+        let resp: WorkloadResponse =
+            serde_json::from_str(&line).context("Parsing WorkloadResponse")?;
 
         match resp {
             WorkloadResponse::Success {

@@ -19,6 +19,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 mod client;
 mod config;
 mod csr;
+mod transport;
 
 use config::AgentConfig;
 

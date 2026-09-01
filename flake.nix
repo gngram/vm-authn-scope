@@ -50,6 +50,12 @@
         inherit authScope authScopeGo;
       };
 
+      tcp-dual-attestation-test = import ./nix/checks/tcp-dual-attestation-test.nix {
+        inherit pkgs;
+        nixosModules = self.nixosModules;
+        inherit authScope authScopeGo;
+      };
+
       profiler-test = import ./nix/checks/profiler-test.nix {
         inherit pkgs;
         inherit authScope;

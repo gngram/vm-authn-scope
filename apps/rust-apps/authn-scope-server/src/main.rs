@@ -15,15 +15,15 @@ use std::{path::PathBuf, process, sync::Arc};
 use clap::Parser;
 use tokio::sync::Mutex;
 use tracing::{error, info};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 use authn_scope_ca::CertificateAuthority;
 
 mod attestation;
 mod config;
 mod handler;
-mod listener;
 mod policy;
+mod transport;
 
 use attestation::KnownVms;
 use config::HostConfig;
@@ -32,7 +32,7 @@ use config::HostConfig;
 #[derive(Debug, Parser)]
 #[command(
     name = "authn-scope-server",
-    about = "Vsock certificate authority for multi-VM environments",
+    about = "Certificate authority for multi-VM environments (vsock & TCP)",
     version
 )]
 struct Cli {
@@ -62,13 +62,6 @@ async fn main() {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-
-    // Require root.
-    #[cfg(unix)]
-    if unsafe { libc_getuid() } != 0 {
-        error!("authn-scope-server must run as root (vsock bind requires privilege)");
-        process::exit(1);
-    }
 
     let cli = Cli::parse();
 
@@ -101,6 +94,15 @@ async fn main() {
             process::exit(1);
         }
     };
+
+    // Require root if using vsock (vsock bind requires privilege).
+    #[cfg(unix)]
+    if cfg.transport == "vsock" && unsafe { libc_getuid() } != 0 {
+        error!(
+            "authn-scope-server with vsock transport must run as root (vsock bind requires privilege)"
+        );
+        process::exit(1);
+    }
 
     // Load attestation state (TOFU)
     let known_vms = match KnownVms::load() {
@@ -136,7 +138,12 @@ async fn main() {
     let cfg = Arc::new(cfg);
     let ca = Arc::new(ca);
 
-    if let Err(e) = listener::run_listener(cfg, ca, known_vms).await {
+    let res = match cfg.transport.as_str() {
+        "tcp" => transport::tcp::run_tcp_listener(cfg, ca, known_vms).await,
+        _ => transport::vsock::run_vsock_listener(cfg, ca, known_vms).await,
+    };
+
+    if let Err(e) = res {
         error!(error = %e, "Listener terminated with error");
         process::exit(1);
     }

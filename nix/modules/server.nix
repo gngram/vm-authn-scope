@@ -37,24 +37,24 @@ in {
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [cfg.package];
 
-    services.udev.extraRules = ''
+    services.udev.extraRules = lib.mkIf (cfg.settings.transport or "vsock" == "vsock") ''
       KERNEL=="vsock", TAG+="systemd"
     '';
 
-    environment.etc."authn-scope/host.json".source =
-      (pkgs.formats.json {}).generate "host.json" (cfg.settings // {
+    environment.etc."authn-scope/host.json".source = (pkgs.formats.json {}).generate "host.json" (cfg.settings
+      // {
         server_port = shared.serverPort;
       });
 
     systemd.services.authn-scope-server = {
       description = "VM-AuthN-Scope Host Server";
-      wantedBy = [ "sysinit.target" ];
+      wantedBy = ["sysinit.target"];
       unitConfig = {
         DefaultDependencies = false;
       };
-      bindsTo = [ "dev-vsock.device" ];
-      after = [ "dev-vsock.device" ];
-      before = [ "sysinit.target" ];
+      bindsTo = lib.optional (cfg.settings.transport or "vsock" == "vsock") "dev-vsock.device";
+      after = lib.optional (cfg.settings.transport or "vsock" == "vsock") "dev-vsock.device";
+      before = ["sysinit.target"];
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/authn-scope-server --config /etc/authn-scope/host.json${lib.optionalString cfg.generateKey " --genkey"}";
         Restart = "always";

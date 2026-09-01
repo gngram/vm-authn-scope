@@ -91,7 +91,7 @@
     systemd.services.service-a = {
       description = "Service A Workload using Workload API";
       wantedBy = [];
-      after = [ "authn-scope-agent.service" ];
+      after = ["authn-scope-agent.service"];
       serviceConfig = {
         ExecStart = "${authScope}/bin/workload-test-workload /run/authn-scope/workload.sock --test-rotation";
         User = "service-a";
@@ -121,10 +121,10 @@ in
       with subtest("-- workload api test --"):
           machine.wait_for_file("/run/authn-scope/workload.sock")
           machine.succeed("systemctl start service-a.service")
-          
+
           # Wait for the credentials to be written to /tmp by the workload
           machine.wait_for_file("/tmp/workload-cert-service-a.pem")
-          
+
           # Verify IP SAN is embedded in the dynamically requested workload cert
           workload_cert_text = machine.succeed("openssl x509 -in /tmp/workload-cert-service-a.pem -noout -text")
           assert "IP Address:127.0.0.1" in workload_cert_text

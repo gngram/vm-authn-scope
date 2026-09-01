@@ -8,7 +8,7 @@
   pkgs,
   ...
 }: let
-  authScope   = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
+  authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
   authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
 
   evalTestScript = pkgs.writeShellScript "run-eval-test" ''
@@ -68,7 +68,7 @@ in {
   # service-a system user so the agent's UNIX selector can match it
   users.users.service-a = {
     isSystemUser = true;
-    group        = "service-a";
+    group = "service-a";
   };
   users.groups.service-a = {};
 
@@ -98,11 +98,11 @@ in {
 
   # --- Agent Configuration ---
   services.authn-scope.agent = {
-    enable  = true;
+    enable = true;
     package = authScope;
     settings = {
-      vm_name             = "local-vm";
-      server_port         = 900;
+      vm_name = "local-vm";
+      server_port = 900;
       workload_api_socket = "/run/authn-scope/workload.sock";
     };
   };
@@ -112,12 +112,12 @@ in {
   # On any error the ERR trap writes FAILURE and powers off the VM.
   systemd.services.authn-scope-evaluator-test = {
     description = "Run VM-AuthN-Scope Evaluator Test and Shutdown VM";
-    wantedBy    = ["multi-user.target"];
-    after       = ["authn-scope-agent.service" "network.target"];
-    requires    = ["authn-scope-agent.service"];
+    wantedBy = ["multi-user.target"];
+    after = ["authn-scope-agent.service" "network.target"];
+    requires = ["authn-scope-agent.service"];
     serviceConfig = {
-      Type      = "oneshot";
-      User      = "root";
+      Type = "oneshot";
+      User = "root";
       ExecStart = evalTestScript;
     };
   };

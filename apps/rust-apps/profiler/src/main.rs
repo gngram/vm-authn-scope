@@ -1,7 +1,7 @@
-use std::time::Instant;
-use std::path::Path;
 use authn_scope_ca::CertificateAuthority;
 use authn_scope_ca::signing::SigningRequest;
+use std::path::Path;
+use std::time::Instant;
 
 fn get_rss_kb() -> Option<usize> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -83,7 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let avg_signing = signing_durations.iter().sum::<std::time::Duration>() / iterations;
 
     // 3. TPM Attestation Quote Verification Benchmark (Pure Rust)
-    println!("\n[3] TPM Quote Verification Benchmark ({} iterations):", iterations);
+    println!(
+        "\n[3] TPM Quote Verification Benchmark ({} iterations):",
+        iterations
+    );
 
     // Static test 2048-bit RSA key in PKCS#8 DER format for benchmark
     const TEST_RSA_PKCS8_PEM: &str = "\
@@ -133,7 +136,7 @@ hZLzB6i9djLqaVXisgWhySZDHbEzbTCOOxP9EbvUXWwkTd0vfY39FAAAvGpo2rlw\n\
     attest_bytes.extend_from_slice(&[0x80, 0x18]); // TPM_ST_ATTEST_QUOTE (0x8018)
     // Qualified signer (TPM2B_NAME): size(2) + name
     attest_bytes.extend_from_slice(&0x0020u16.to_be_bytes());
-    attest_bytes.extend_from_slice(&vec![0xAA; 32]);
+    attest_bytes.extend_from_slice(&[0xAA; 32]);
     // Extra data (TPM2B_DATA): size(2) + nonce
     attest_bytes.extend_from_slice(&(nonce.len() as u16).to_be_bytes());
     attest_bytes.extend_from_slice(&nonce);
@@ -153,10 +156,16 @@ hZLzB6i9djLqaVXisgWhySZDHbEzbTCOOxP9EbvUXWwkTd0vfY39FAAAvGpo2rlw\n\
     use ring::signature::RsaKeyPair;
     let ring_key_pair = RsaKeyPair::from_pkcs8(&pkcs8_der)
         .map_err(|e| anyhow::anyhow!("RSA keypair from pkcs8: {:?}", e))?;
-    
+
     let mut sig_bytes = vec![0u8; ring_key_pair.public().modulus_len()];
     let rng = ring::rand::SystemRandom::new();
-    ring_key_pair.sign(&ring::signature::RSA_PKCS1_SHA256, &rng, &attest_bytes, &mut sig_bytes)
+    ring_key_pair
+        .sign(
+            &ring::signature::RSA_PKCS1_SHA256,
+            &rng,
+            &attest_bytes,
+            &mut sig_bytes,
+        )
         .map_err(|e| anyhow::anyhow!("RSA sign: {:?}", e))?;
 
     // Create TPMT_PUBLIC representation for verification
@@ -167,12 +176,20 @@ hZLzB6i9djLqaVXisgWhySZDHbEzbTCOOxP9EbvUXWwkTd0vfY39FAAAvGpo2rlw\n\
     tpmt_public.extend_from_slice(&[0x00, 0x04, 0x00, 0x72]); // attributes
     tpmt_public.extend_from_slice(&[0x00, 0x00]); // empty authPolicy
     // TPMS_RSA_PARMS: symmetric(2, Null=0x0010) + scheme(2, RSASSA=0x0014) + hash(2, SHA256=0x000B) + keyBits(2, 2048=0x0800) + exponent(4, 0)
-    tpmt_public.extend_from_slice(&[0x00, 0x10, 0x00, 0x14, 0x00, 0x0B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    tpmt_public.extend_from_slice(&[
+        0x00, 0x10, 0x00, 0x14, 0x00, 0x0B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
     // TPM2B_PUBLIC_KEY_RSA (unique modulus): size(2) + modulus bytes
     let mut n_slice = &pkcs8_der[..];
-    if let Some(pos) = pkcs8_der.windows(4).position(|w| w == [0x02, 0x82, 0x01, 0x01]) {
+    if let Some(pos) = pkcs8_der
+        .windows(4)
+        .position(|w| w == [0x02, 0x82, 0x01, 0x01])
+    {
         n_slice = &pkcs8_der[pos + 5..pos + 5 + 256];
-    } else if let Some(pos) = pkcs8_der.windows(4).position(|w| w == [0x02, 0x82, 0x01, 0x00]) {
+    } else if let Some(pos) = pkcs8_der
+        .windows(4)
+        .position(|w| w == [0x02, 0x82, 0x01, 0x00])
+    {
         n_slice = &pkcs8_der[pos + 4..pos + 4 + 256];
     }
     tpmt_public.extend_from_slice(&(n_slice.len() as u16).to_be_bytes());
@@ -186,11 +203,7 @@ hZLzB6i9djLqaVXisgWhySZDHbEzbTCOOxP9EbvUXWwkTd0vfY39FAAAvGpo2rlw\n\
     let mut quote_verify_durations = Vec::new();
     for _ in 0..iterations {
         let start_verify = Instant::now();
-        let verified_digest = authn_scope_tpm::verify_quote(
-            &tpmt_public,
-            &nonce,
-            &quote,
-        )?;
+        let verified_digest = authn_scope_tpm::verify_quote(&tpmt_public, &nonce, &quote)?;
         quote_verify_durations.push(start_verify.elapsed());
         assert_eq!(verified_digest, mock_pcr_digest);
     }
@@ -198,11 +211,26 @@ hZLzB6i9djLqaVXisgWhySZDHbEzbTCOOxP9EbvUXWwkTd0vfY39FAAAvGpo2rlw\n\
     let avg_quote_verify = quote_verify_durations.iter().sum::<std::time::Duration>() / iterations;
 
     println!("\n=== PROFILE RESULTS SUMMARY ===");
-    println!("Avg Key Gen + CSR Creation:     {:?} µs", avg_keygen.as_micros());
-    println!("Avg CSR Signing (Host CA):      {:?} µs", avg_signing.as_micros());
-    println!("Avg TPM Quote Verification:     {:?} µs", avg_quote_verify.as_micros());
-    println!("Final VmRSS:                    {:?} KB", get_rss_kb().unwrap_or(0));
-    println!("Final VmSize:                   {:?} KB", get_vsize_kb().unwrap_or(0));
+    println!(
+        "Avg Key Gen + CSR Creation:     {:?} µs",
+        avg_keygen.as_micros()
+    );
+    println!(
+        "Avg CSR Signing (Host CA):      {:?} µs",
+        avg_signing.as_micros()
+    );
+    println!(
+        "Avg TPM Quote Verification:     {:?} µs",
+        avg_quote_verify.as_micros()
+    );
+    println!(
+        "Final VmRSS:                    {:?} KB",
+        get_rss_kb().unwrap_or(0)
+    );
+    println!(
+        "Final VmSize:                   {:?} KB",
+        get_vsize_kb().unwrap_or(0)
+    );
 
     // Clean up temporary files
     let _ = std::fs::remove_file(cert_path);

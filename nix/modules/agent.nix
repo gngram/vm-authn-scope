@@ -31,27 +31,28 @@ in {
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [cfg.package];
 
-    services.udev.extraRules = ''
+    services.udev.extraRules = lib.mkIf (cfg.settings.transport or "vsock" == "vsock") ''
       KERNEL=="vsock", TAG+="systemd"
     '';
 
-    environment.etc."authn-scope/agent.json".source =
-      (pkgs.formats.json {}).generate "agent.json" ({
+    environment.etc."authn-scope/agent.json".source = (pkgs.formats.json {}).generate "agent.json" ({
         vm_name = config.networking.hostName;
-      } // cfg.settings // {
+      }
+      // cfg.settings
+      // {
         client_port = shared.agentPort;
       });
 
     systemd.services.authn-scope-agent = {
       description = "VM-AuthN-Scope Agent";
       # Anchor to early boot instead of normal multi-user startup
-      wantedBy = [ "sysinit.target" ];
+      wantedBy = ["sysinit.target"];
       unitConfig = {
         DefaultDependencies = false;
       };
-      bindsTo = [ "dev-vsock.device" ];
-      after = [ "dev-vsock.device" ];
-      before = [ "sysinit.target" ];
+      bindsTo = lib.optional (cfg.settings.transport or "vsock" == "vsock") "dev-vsock.device";
+      after = lib.optional (cfg.settings.transport or "vsock" == "vsock") "dev-vsock.device";
+      before = ["sysinit.target"];
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/authn-scope-agent --config /etc/authn-scope/agent.json";
         Restart = "always";

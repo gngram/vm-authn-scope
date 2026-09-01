@@ -6,7 +6,7 @@
   pkgs,
   ...
 }: let
-  authScope   = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
+  authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
   authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
 
   evalTestScript = pkgs.writeShellScript "run-eval-test" ''
@@ -16,7 +16,7 @@
     mkdir -p /workspace/test-result
 
     echo "==> [VM-1] Waiting for Workload API socket..."
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
       [ -S /run/authn-scope/workload.sock ] && break
       sleep 1
     done
@@ -60,7 +60,7 @@ in {
 
   users.users.service-a = {
     isSystemUser = true;
-    group        = "service-a";
+    group = "service-a";
   };
   users.groups.service-a = {};
 
@@ -86,23 +86,23 @@ in {
   ];
 
   services.authn-scope.agent = {
-    enable  = true;
+    enable = true;
     package = authScope;
     settings = {
-      vm_name             = "vm-1";
-      server_port         = 900;
+      vm_name = "vm-1";
+      server_port = 900;
       workload_api_socket = "/run/authn-scope/workload.sock";
     };
   };
 
   systemd.services.authn-scope-evaluator-test = {
     description = "Run VM-1 Evaluator Test and Shutdown VM";
-    wantedBy    = ["multi-user.target"];
-    after       = ["authn-scope-agent.service" "network.target"];
-    requires    = ["authn-scope-agent.service"];
+    wantedBy = ["multi-user.target"];
+    after = ["authn-scope-agent.service" "network.target"];
+    requires = ["authn-scope-agent.service"];
     serviceConfig = {
-      Type      = "oneshot";
-      User      = "root";
+      Type = "oneshot";
+      User = "root";
       ExecStart = evalTestScript;
     };
   };

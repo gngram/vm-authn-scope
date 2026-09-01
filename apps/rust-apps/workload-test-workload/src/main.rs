@@ -1,10 +1,11 @@
-use std::{env, fs, time::Duration};
 use authn_scope_workload::WorkloadClient;
+use std::{env, fs, time::Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let socket_path = args.get(1)
+    let socket_path = args
+        .get(1)
         .map(|s| s.as_str())
         .unwrap_or("/run/authn-scope/workload.sock");
 
@@ -46,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let creds = client.fetch_credentials().await?;
 
     println!("Credentials fetched successfully!");
-    
+
     // Write them to /tmp/ for test script inspection
     fs::write(&cert_path, &creds.cert_pem)?;
     fs::write(&key_path, &creds.key_pem)?;

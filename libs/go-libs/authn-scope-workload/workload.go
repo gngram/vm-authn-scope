@@ -12,9 +12,9 @@ import (
 
 // X509Credentials holds the workload certificates and key in memory.
 type X509Credentials struct {
-	CertPEM     string `json:"cert_pem"`
-	KeyPEM      string `json:"key_pem"`
-	CaCertPEM   string `json:"ca_cert_pem"`
+	CertPEM   string `json:"cert_pem"`
+	KeyPEM    string `json:"key_pem"`
+	CaCertPEM string `json:"ca_cert_pem"`
 }
 
 type workloadRequest struct {

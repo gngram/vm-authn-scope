@@ -1,19 +1,18 @@
-//! vsock listener — accepts connections and spawns TLS-wrapped handlers.
+//! vsock listener implementation for authn-scope-server.
 
 use std::sync::Arc;
-
 use tokio::sync::Mutex;
-use tokio_vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 use tracing::{error, info};
 
 use authn_scope_ca::CertificateAuthority;
 
-use crate::{attestation::KnownVms, config::HostConfig, handler::handle_connection};
+use crate::{
+    attestation::KnownVms, config::HostConfig, handler::handle_connection, transport::PeerInfo,
+};
 
 /// Start the vsock listener loop.
-///
-/// Runs until the process is terminated.
-pub async fn run_listener(
+pub async fn run_vsock_listener(
     config: Arc<HostConfig>,
     ca: Arc<CertificateAuthority>,
     known_vms: Arc<Mutex<KnownVms>>,
@@ -39,15 +38,16 @@ pub async fn run_listener(
                         expected = config.peer_port,
                         "Rejected connection: peer port mismatch"
                     );
-                    continue; // Terminate connection by dropping the stream
+                    continue; // Drop stream
                 }
 
                 let config = Arc::clone(&config);
                 let ca = Arc::clone(&ca);
                 let known_vms = Arc::clone(&known_vms);
+                let peer_info = PeerInfo::from_vsock(peer_cid);
 
                 tokio::spawn(async move {
-                    handle_connection(stream, peer_cid, config, ca, known_vms).await;
+                    handle_connection(stream, peer_info, config, ca, known_vms).await;
                 });
             }
             Err(e) => {

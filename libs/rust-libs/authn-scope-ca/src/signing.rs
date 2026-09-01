@@ -1,15 +1,11 @@
 //! CSR signing: validates and issues leaf certificate.
 
 use rcgen::{
-    CertificateSigningRequestParams, ExtendedKeyUsagePurpose, Ia5String,
-    KeyUsagePurpose, SanType,
+    CertificateSigningRequestParams, ExtendedKeyUsagePurpose, Ia5String, KeyUsagePurpose, SanType,
 };
 use tracing::info;
 
-use crate::{
-    ca::CertificateAuthority,
-    error::CaError,
-};
+use crate::{ca::CertificateAuthority, error::CaError};
 
 /// Parameters for signing a single CSR.
 pub struct SigningRequest<'a> {
@@ -37,8 +33,8 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     );
 
     // Parse the incoming CSR.
-    let mut csr_params = CertificateSigningRequestParams::from_pem(req.csr_pem)
-        .map_err(|e| CaError::RcgenError(e))?;
+    let mut csr_params =
+        CertificateSigningRequestParams::from_pem(req.csr_pem).map_err(CaError::RcgenError)?;
 
     // Set Subject CommonName to identity.
     let mut dn = rcgen::DistinguishedName::new();
@@ -46,9 +42,7 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
     csr_params.params.distinguished_name = dn;
 
     // Set leaf-cert key usages to digitalSignature only.
-    csr_params.params.key_usages = vec![
-        KeyUsagePurpose::DigitalSignature,
-    ];
+    csr_params.params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
 
     // Set extended key usages to serverAuth, clientAuth.
     csr_params.params.extended_key_usages = vec![
@@ -61,9 +55,9 @@ pub fn sign_csr(ca: &CertificateAuthority, req: SigningRequest<'_>) -> Result<St
         .map_err(|e| CaError::CertParseFailed(e.to_string()))?;
     let mut sans = vec![SanType::DnsName(dns_name)];
     if let Some(ref ip_str) = req.ip {
-        let ip_addr: std::net::IpAddr = ip_str
-            .parse()
-            .map_err(|e| CaError::CertParseFailed(format!("invalid IP address '{}': {}", ip_str, e)))?;
+        let ip_addr: std::net::IpAddr = ip_str.parse().map_err(|e| {
+            CaError::CertParseFailed(format!("invalid IP address '{}': {}", ip_str, e))
+        })?;
         sans.push(SanType::IpAddress(ip_addr));
     }
     csr_params.params.subject_alt_names = sans;

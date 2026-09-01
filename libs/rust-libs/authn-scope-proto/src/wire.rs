@@ -9,6 +9,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Protocol version with vTPM attestation support.
 pub const PROTOCOL_VERSION_TPM: u32 = 2;
 
+/// Protocol version with Dual Hardware Attestation support.
+pub const PROTOCOL_VERSION_DUAL_TPM: u32 = 3;
+
 /// Request sent by the agent to the host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -20,6 +23,9 @@ pub enum AgentRequest {
         /// Present when the guest has a vTPM; absent otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ak_pub: Option<String>,
+        /// Base64-encoded client challenge nonce for server hardware attestation (32 bytes).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_nonce: Option<String>,
     },
     /// Attestation response sent after receiving an AttestationChallenge.
     AttestationResponse {
@@ -81,6 +87,18 @@ pub enum AgentResponse {
     AttestationChallenge {
         /// Base64-encoded random nonce (32 bytes).
         nonce: String,
+    },
+    /// Dual attestation challenge: server sends its own hardware quote and challenges the agent.
+    #[serde(rename = "dual_attestation_challenge")]
+    DualAttestationChallenge {
+        /// Base64-encoded server random nonce for agent TPM2_Quote (32 bytes).
+        server_nonce: String,
+        /// Base64-encoded Server AK public key.
+        server_ak_pub: Option<String>,
+        /// Base64-encoded Server TPMS_ATTEST bytes (over client_nonce + server PCRs).
+        server_attest: Option<String>,
+        /// Base64-encoded Server TPMT_SIGNATURE bytes.
+        server_signature: Option<String>,
     },
     HandshakeOk {
         workloads: HashMap<String, WorkloadConfig>,

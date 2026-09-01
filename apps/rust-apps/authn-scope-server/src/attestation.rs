@@ -1,8 +1,7 @@
 //! TOFU (Trust-On-First-Use) attestation state management.
 //!
-//! Stores and verifies learned PCR values from guest VMs.
-//! The state file (`known_vms.json`) can optionally be sealed
-//! by the host's own TPM.
+//! Stores and verifies learned hardware AK public keys from guest VMs.
+//! The state file (`known_vms.json`) is sealed into the host's own physical TPM.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -33,15 +32,13 @@ pub fn get_seal_path() -> PathBuf {
 /// TOFU state: maps VM names to their known attestation data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KnownVms {
-    /// Map of VM name → known PCR digest (hex-encoded SHA-256).
+    /// Map of VM name → known VM AK entry.
     pub vms: HashMap<String, KnownVmEntry>,
 }
 
 /// Stored attestation data for a single VM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnownVmEntry {
-    /// The PCR digest from the TPM quote (hex-encoded).
-    pub pcr_digest: String,
     /// The AK public key bytes (base64-encoded) used to verify the quote.
     pub ak_pub: String,
     /// Timestamp of when this entry was first learned (ISO 8601).
@@ -69,8 +66,8 @@ impl KnownVms {
                 Ok(tcti) => {
                     let seal_data = std::fs::read_to_string(&seal_path)
                         .context("reading known_vms seal file")?;
-                    let blob: authn_scope_tpm::SealedBlob = serde_json::from_str(&seal_data)
-                        .context("parsing known_vms seal file")?;
+                    let blob: authn_scope_tpm::SealedBlob =
+                        serde_json::from_str(&seal_data).context("parsing known_vms seal file")?;
                     match authn_scope_tpm::unseal_data(&tcti, &blob) {
                         Ok(unsealed) => {
                             let stored_hash_hex = String::from_utf8(unsealed)
@@ -95,7 +92,10 @@ impl KnownVms {
                     }
                 }
                 Err(e) => {
-                    warn!("No host TPM detected ({}), skipping known_vms seal verification", e);
+                    warn!(
+                        "No host TPM detected ({}), skipping known_vms seal verification",
+                        e
+                    );
                 }
             }
         }
@@ -143,32 +143,28 @@ impl KnownVms {
         Ok(())
     }
 
-    /// Check or learn PCR values for a VM (TOFU logic).
+    /// Check or learn hardware AK for a VM (TOFU logic).
     ///
-    /// - If no entry exists for `vm_name`, learns the PCR digest (trust-on-first-use)
-    /// - If an entry exists, verifies the PCR digest matches
+    /// - If no entry exists for `vm_name`, learns the AK public key (trust-on-first-use)
+    /// - If an entry exists, verifies the AK public key matches
     ///
     /// Returns `Ok(true)` if newly learned, `Ok(false)` if matched existing.
-    pub fn check_or_learn(
-        &mut self,
-        vm_name: &str,
-        pcr_digest_hex: &str,
-        ak_pub_b64: &str,
-    ) -> Result<bool> {
+    pub fn check_or_learn(&mut self, vm_name: &str, ak_pub_b64: &str) -> Result<bool> {
         if let Some(known) = self.vms.get(vm_name) {
-            // Existing entry — verify PCR digest matches
-            if known.pcr_digest != pcr_digest_hex {
+            // Existing entry — verify AK matches
+            if known.ak_pub != ak_pub_b64 {
                 bail!(
-                    "PCR attestation failed for VM '{}': stored digest '{}' != received '{}'.\n\
-                     This may indicate the VM image has been tampered with or updated.\n\
-                     To accept the new image, run: authn-scope-server --reset-attestation {}",
+                    "Attestation failed for VM '{}': stored AK public key does not match received key.\n\
+                     This indicates the VM key has been replaced or modified.\n\
+                     To accept the new key, run: authn-scope-server --reset-attestation {}",
                     vm_name,
-                    known.pcr_digest,
-                    pcr_digest_hex,
                     vm_name
                 );
             }
-            info!(vm_name, "PCR attestation verified (matches stored values)");
+            info!(
+                vm_name,
+                "Hardware AK verified (matches stored TOFU baseline)"
+            );
             Ok(false)
         } else {
             // First-use — learn and store
@@ -176,15 +172,11 @@ impl KnownVms {
             self.vms.insert(
                 vm_name.to_string(),
                 KnownVmEntry {
-                    pcr_digest: pcr_digest_hex.to_string(),
                     ak_pub: ak_pub_b64.to_string(),
                     learned_at: now,
                 },
             );
-            info!(
-                vm_name,
-                "TOFU: learned PCR attestation for VM (first boot)"
-            );
+            info!(vm_name, "TOFU: learned hardware AK for VM (first boot)");
             Ok(true)
         }
     }
@@ -197,8 +189,8 @@ impl KnownVms {
 
 /// Seal the known_vms hash into the host TPM.
 pub fn seal_known_vms_hash(tcti: &str, hash_hex: &str, seal_path: &Path) -> Result<()> {
-    let blob = authn_scope_tpm::seal_data(tcti, hash_hex.as_bytes())
-        .context("sealing known_vms hash")?;
+    let blob =
+        authn_scope_tpm::seal_data(tcti, hash_hex.as_bytes()).context("sealing known_vms hash")?;
 
     if let Some(parent) = seal_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -213,7 +205,10 @@ pub fn seal_known_vms_hash(tcti: &str, hash_hex: &str, seal_path: &Path) -> Resu
         std::fs::set_permissions(seal_path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    info!("known_vms.json hash sealed into host TPM at {}", seal_path.display());
+    info!(
+        "known_vms.json hash sealed into host TPM at {}",
+        seal_path.display()
+    );
     Ok(())
 }
 
@@ -229,7 +224,6 @@ fn hex_encode(data: &[u8]) -> String {
 }
 
 fn time_now_iso8601() -> String {
-    // Simple UTC timestamp without external dependencies
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();

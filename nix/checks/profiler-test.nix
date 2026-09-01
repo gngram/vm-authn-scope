@@ -12,7 +12,7 @@ in
 
     testScript = ''
       machine.wait_for_unit("multi-user.target")
-      
+
       output = machine.succeed("profiler")
       print("\n=== PROFILER OUTPUT ===")
       print(output)

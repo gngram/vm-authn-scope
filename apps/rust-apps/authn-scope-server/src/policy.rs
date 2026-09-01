@@ -6,7 +6,7 @@ use crate::config::HostConfig;
 #[derive(Debug)]
 pub struct PolicyDecision {
     pub vm_name: String,
-    pub vm_cid: u32,
+    pub vm_cid: Option<u32>,
     pub ip: Option<String>,
     pub validity_seconds: u32,
 }

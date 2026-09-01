@@ -23,6 +23,6 @@ fn main() {
     } else {
         assert!(!eval.identity.is_empty(), "Identity is empty");
     }
-    
+
     println!("All evaluations passed successfully!");
 }

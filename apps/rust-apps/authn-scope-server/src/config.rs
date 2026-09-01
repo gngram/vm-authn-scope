@@ -15,14 +15,24 @@ pub struct HostConfig {
     pub ca_cert_path: PathBuf,
     /// Path to the CA private key PEM file.
     pub ca_key_path: PathBuf,
+    /// Transport type: "vsock" (default) or "tcp".
+    #[serde(default = "default_transport")]
+    pub transport: String,
     /// vsock port on which to listen (should be privileged / < 1000).
     #[serde(default = "default_server_port")]
     pub server_port: u32,
+    /// TCP listen address (e.g. "0.0.0.0:9000") when transport is "tcp".
+    #[serde(default)]
+    pub listen_addr: Option<String>,
     /// Map of VM name → VM entry.
     pub vms: HashMap<String, VmEntry>,
-    /// Expected peer port of the client agent.
+    /// Expected peer port of the client agent (vsock only).
     #[serde(default = "default_peer_port")]
     pub peer_port: u32,
+}
+
+fn default_transport() -> String {
+    "vsock".to_string()
 }
 
 fn default_server_port() -> u32 {
@@ -36,8 +46,9 @@ fn default_peer_port() -> u32 {
 /// Per-VM configuration entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmEntry {
-    /// vsock CID of the VM.
-    pub vm_cid: u32,
+    /// vsock CID of the VM (optional when running over TCP).
+    #[serde(default)]
+    pub vm_cid: Option<u32>,
     /// IP address of the VM (embedded in issued certificates).
     pub ip: Option<String>,
     /// Map of Workload name → Identity policy.
@@ -116,7 +127,9 @@ impl IdentityPolicy {
         }
 
         if unix.bin_path.is_some() && (unix.user.is_none() || unix.group.is_none()) {
-            anyhow::bail!("if bin-path is specified then it must be attached to a user:group (both unix:user and unix:group must be present)");
+            anyhow::bail!(
+                "if bin-path is specified then it must be attached to a user:group (both unix:user and unix:group must be present)"
+            );
         }
 
         Ok(SelectorConfig {
@@ -143,7 +156,12 @@ impl HostConfig {
         for (vm_name, vm) in &cfg.vms {
             for (workload_name, policy) in &vm.identities {
                 policy.parse_selector().map_err(|e| {
-                    anyhow::anyhow!("VM '{}' workload '{}' selector error: {}", vm_name, workload_name, e)
+                    anyhow::anyhow!(
+                        "VM '{}' workload '{}' selector error: {}",
+                        vm_name,
+                        workload_name,
+                        e
+                    )
                 })?;
             }
         }

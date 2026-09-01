@@ -36,12 +36,14 @@ impl Evaluator {
             .map_err(|e| EvalError::X509Parse(format!("Peer cert parse failed: {:?}", e)))?;
 
         // 3. Verify peer certificate signature using CA public key
-        peer_cert.verify_signature(Some(ca_pubkey))
-            .map_err(|e| EvalError::SignatureVerification(format!("Signature verification failed: {:?}", e)))?;
+        peer_cert.verify_signature(Some(ca_pubkey)).map_err(|e| {
+            EvalError::SignatureVerification(format!("Signature verification failed: {:?}", e))
+        })?;
 
         // 4. Extract subject Common Name (CN)
         let subject = peer_cert.subject();
-        let identity = subject.iter_common_name()
+        let identity = subject
+            .iter_common_name()
             .next()
             .and_then(|cn| cn.as_str().ok())
             .map(|s| s.to_string())
@@ -56,7 +58,7 @@ mod tests {
     use super::*;
     use authn_scope_ca::{
         ca::CertificateAuthority,
-        signing::{sign_csr, SigningRequest},
+        signing::{SigningRequest, sign_csr},
     };
     use rcgen::{CertificateParams, KeyPair};
     use tempfile::tempdir;
