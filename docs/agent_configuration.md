@@ -8,7 +8,8 @@ This document describes the configuration and operational model of the **VM-Auth
 | :---                  | :---    | :----------------------------------------------------------------------------------- | :------ |
 | `vm_name`             | `string`| Human‑readable name of this VM. Sent to the host during the handshake.                 | *required* |
 | `server_port`         | `integer`| The vsock port on which the host CA server is listening.                             | `900` |
-| `client_port`         | `integer`| The local vsock port the agent binds to when dialing the host.                        | `901` |
+| `client_port`         | `integer`| The local vsock port the agent binds to when dialing host CSR requests.              | `901` |
+| `notification_port`   | `integer`| The local vsock port the agent binds to when subscribing to notifications.           | `902` |
 | `workload_api_socket` | `string`| Path of the Unix‑Domain Socket exposing the **Workload API** to local applications.  | `"/run/authn-scope/workload.sock"` |
 
 ---

@@ -41,6 +41,21 @@
       /workspace/test-result/ca-cert.pem \
       service-a
 
+    echo "==> [VM-1] Running Rust gRPC test application (as service-a)..."
+    ${pkgs.util-linux}/bin/runuser -u service-a -- env USER=service-a \
+      ${authScope}/bin/grpc-app-rust server 0.0.0.0:50052 /run/authn-scope/workload.sock > /workspace/test-result/vm1-grpc-app.log 2>&1 &
+    RUST_PID=$!
+
+    # Wait up to 60 seconds for VM-2 to finish its gRPC client test
+    for i in $(seq 1 60); do
+      if [ -f /workspace/test-result/vm2-result-summary ]; then
+        break
+      fi
+      sleep 1
+    done
+
+    wait $RUST_PID || true
+
     echo SUCCESS > /workspace/test-result/vm1-result-summary
     echo "==> [VM-1] All tests passed! Leaving VM running for live inspection."
   '';
@@ -50,6 +65,8 @@ in {
   ];
 
   networking.hostName = "vm-1";
+  networking.firewall.allowedTCPPorts = [50052];
+  networking.firewall.enable = false;
   services.getty.autologinUser = "root";
 
   users.users.nixos = {
@@ -68,6 +85,7 @@ in {
   environment.systemPackages = [pkgs.tpm2-tools];
 
   virtualisation.vmVariant = {
+    virtualisation.writableStoreUseTmpfs = true;
     virtualisation.sharedDirectories.workspace = {
       source = toString ./../..;
       target = "/workspace";

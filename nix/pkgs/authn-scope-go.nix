@@ -2,6 +2,6 @@
 buildGoModule {
   pname = "authn-scope-eval-test-go";
   version = "0.1.0";
-  src = ../../libs/go-libs/authn-scope-evaluator;
+  src = ../../testapp/authn-scope-evaluator-go;
   vendorHash = null;
 }

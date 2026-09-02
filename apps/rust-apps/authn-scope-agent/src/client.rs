@@ -110,6 +110,13 @@ pub async fn run_agent(config: &AgentConfig) -> Result<()> {
         });
     }
 
+    // 4. Launch background notification listener to receive time sync signals from host CA server.
+    let config_clone = Arc::new(config.clone());
+    let state_clone = Arc::clone(&state);
+    tokio::spawn(async move {
+        run_notification_listener(config_clone, state_clone).await;
+    });
+
     info!(
         transport = %config.transport,
         "Agent online and ready. Running main event loop..."
@@ -117,6 +124,91 @@ pub async fn run_agent(config: &AgentConfig) -> Result<()> {
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    }
+}
+
+async fn run_notification_listener(config: Arc<AgentConfig>, state: Arc<AgentState>) {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        info!("Connecting to CA server notification channel...");
+        match connect_and_listen_notifications(&config, &state).await {
+            Ok(()) => {
+                info!("Notification subscription connection ended cleanly");
+                backoff = Duration::from_secs(1);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Notification channel error. Retrying in {:?}", backoff);
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(30));
+            }
+        }
+    }
+}
+
+async fn connect_and_listen_notifications(
+    config: &AgentConfig,
+    state: &AgentState,
+) -> Result<()> {
+    info!(
+        notification_port = config.notification_port,
+        "Connecting to CA server notification channel from dedicated notification port..."
+    );
+
+    let mut stream = transport::connect_to_server_port(config, config.notification_port)
+        .await
+        .context("connecting to server notification channel failed")?;
+
+    let req = AgentRequest::SubscribeNotifications {
+        version: PROTOCOL_VERSION,
+        vm_name: config.vm_name.clone(),
+    };
+
+    send_json(&mut stream, &req)
+        .await
+        .context("sending SubscribeNotifications request")?;
+
+    info!("Subscribed to CA server notifications on port {}. Waiting for events...", config.notification_port);
+
+    listen_loop(&mut stream, config, state).await
+}
+
+async fn listen_loop(
+    stream: &mut transport::TransportStream,
+    config: &AgentConfig,
+    state: &AgentState,
+) -> Result<()> {
+    loop {
+        let resp: AgentResponse = recv_json(stream).await.context("reading notification")?;
+        match resp {
+            AgentResponse::TimeSyncNotification { timestamp } => {
+                info!(
+                    timestamp,
+                    "Received TimeSyncNotification from server! Flushing cache and rotating all workload certificates..."
+                );
+                {
+                    let mut cache = state.cache.lock().await;
+                    cache.clear();
+                }
+
+                let workloads: Vec<String> = {
+                    let wl_map = state.workloads.lock().await;
+                    wl_map.keys().cloned().collect()
+                };
+
+                for identity_name in workloads {
+                    info!(identity = %identity_name, "Proactively requesting rotated certificate post-time-sync");
+                    if let Err(e) = get_or_fetch_credentials(config, &identity_name, state).await {
+                        tracing::error!(identity = %identity_name, error = %e, "Failed to rotate certificate after time sync");
+                    }
+                }
+            }
+            AgentResponse::Error { message } => {
+                bail!("Server notification channel returned error: {}", message);
+            }
+            _ => {
+                tracing::debug!("Received unexpected response on notification channel: {:?}", resp);
+            }
+        }
     }
 }
 

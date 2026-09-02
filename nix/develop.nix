@@ -14,11 +14,14 @@ pkgs.mkShell {
     tpm2-tools
     swtpm
     openssl
+    protobuf
+    geany
+    mousepad
   ];
 
   shellHook = ''
     clear
-    alias run-integration-test="sudo --preserve-env=PKG_CONFIG_PATH,PATH ./scripts/run_integration_test.sh"
+    alias run-integration-test="sudo --preserve-env=PKG_CONFIG_PATH,PATH,DISPLAY,XAUTHORITY ./scripts/run_integration_test.sh"
     alias run-nixos-module-test='nix build .#checks.\${pkgs.stdenv.hostPlatform.system}.vm-test.driver -o target/vm-test-driver && ./target/vm-test-driver/bin/nixos-test-driver'
     alias run-tcp-dual-attestation-test='nix build .#checks.\${pkgs.stdenv.hostPlatform.system}.tcp-dual-attestation-test.driver -o target/tcp-dual-attestation-test-driver && ./target/tcp-dual-attestation-test-driver/bin/nixos-test-driver'
     alias run-profiler='nix build .#checks.\${pkgs.stdenv.hostPlatform.system}.profiler-test.driver -o target/profiler-test-driver && ./target/profiler-test-driver/bin/nixos-test-driver'

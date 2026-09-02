@@ -163,6 +163,16 @@ in
           machine.succeed("authn-scope-server --reset-attestation local-vm")
           print("\033[94m" + "-- attestation reset CLI verified successfully --" + "\033[0m")
 
+      # Test server time sync notification signal and certificate rotation
+      print("\n\n")
+      with subtest("-- test server time sync notification & cert rotation --"):
+          server_pid = machine.succeed("systemctl show --property=MainPID --value authn-scope-server.service").strip()
+          machine.succeed(f"kill -USR1 {server_pid}")
+          machine.succeed("sleep 2")
+          agent_log = machine.succeed("journalctl -u authn-scope-agent.service")
+          assert "TimeSyncNotification" in agent_log or "Proactively requesting rotated certificate" in agent_log
+          print("\033[94m" + "-- time sync notification & rotation test completed successfully --" + "\033[0m")
+
       print("\n\n")
       with subtest("-- get status of auth scope server --"):
         status = machine.succeed("systemctl status authn-scope-server.service")

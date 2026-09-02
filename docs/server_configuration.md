@@ -4,13 +4,14 @@ This document describes the configuration options for the **VM-AuthN-Scope Host 
 
 ## Configuration Options
 
-| Option          | Type    | Description                                                                                           | Default |
-| :---            | :---    | :---------------------------------------------------------------------------------------------------- | :------ |
-| `ca_cert_path`  | `string` | Path to the PEM‑encoded CA root certificate (or where it will be generated).                         | *required* |
-| `ca_key_path`   | `string` | Path to the PEM‑encoded CA private key (or where it will be generated).                              | *required* |
-| `server_port`   | `integer`| The vsock port on which the server listens (must be **< 1000**).                                    | `900` |
-| `peer_port`     | `integer`| Expected source port for guest agents. Connections from any other port are rejected.               | `901` |
-| `vms`           | `object`| Map of VM entries keyed by VM name. See **VM Configuration** below.                                   | `{}` |
+| Option              | Type    | Description                                                                                           | Default |
+| :---                | :---    | :---------------------------------------------------------------------------------------------------- | :------ |
+| `ca_cert_path`      | `string` | Path to the PEM‑encoded CA root certificate (or where it will be generated).                         | *required* |
+| `ca_key_path`       | `string` | Path to the PEM‑encoded CA private key (or where it will be generated).                              | *required* |
+| `server_port`       | `integer`| The vsock port on which the server listens (must be **< 1000**).                                    | `900` |
+| `peer_port`         | `integer`| Expected source port for guest agent CSR requests. Connections from other ports are rejected.        | `901` |
+| `notification_port` | `integer`| Expected source port for guest agent notification subscriptions.                                      | `902` |
+| `vms`               | `object` | Map of VM entries keyed by VM name. See **VM Configuration** below.                                   | `{}` |
 
 ---
 

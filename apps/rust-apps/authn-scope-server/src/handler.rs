@@ -19,7 +19,10 @@ use authn_scope_proto::{
     },
 };
 
-use crate::{attestation::KnownVms, config::HostConfig, policy::resolve, transport::PeerInfo};
+use crate::{
+    attestation::KnownVms, config::HostConfig, notifications::NotificationRegistry,
+    policy::resolve, transport::PeerInfo,
+};
 
 pub async fn handle_connection<IO>(
     mut stream: IO,
@@ -27,10 +30,11 @@ pub async fn handle_connection<IO>(
     config: Arc<HostConfig>,
     ca: Arc<CertificateAuthority>,
     known_vms: Arc<Mutex<KnownVms>>,
+    notification_registry: Arc<NotificationRegistry>,
 ) where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
-    match handle_inner(&mut stream, &peer_info, &config, &ca, &known_vms).await {
+    match handle_inner(&mut stream, &peer_info, &config, &ca, &known_vms, &notification_registry).await {
         Ok(()) => {}
         Err(e) => {
             if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
@@ -60,6 +64,7 @@ async fn handle_inner<IO>(
     config: &HostConfig,
     ca: &CertificateAuthority,
     known_vms: &Mutex<KnownVms>,
+    notification_registry: &NotificationRegistry,
 ) -> anyhow::Result<()>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
@@ -68,6 +73,67 @@ where
     let req: AgentRequest = recv_json(stream).await?;
 
     match req {
+        AgentRequest::SubscribeNotifications { version, vm_name } => {
+            if version != PROTOCOL_VERSION
+                && version != PROTOCOL_VERSION_TPM
+                && version != PROTOCOL_VERSION_DUAL_TPM
+            {
+                let msg = format!(
+                    "unsupported protocol version {} (expected {}, {}, or {})",
+                    version, PROTOCOL_VERSION, PROTOCOL_VERSION_TPM, PROTOCOL_VERSION_DUAL_TPM
+                );
+                warn!(?peer_info, vm_name = %vm_name, "{}", msg);
+                send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                return Ok(());
+            }
+
+            let vm_entry = match config.vms.get(&vm_name) {
+                Some(entry) => entry,
+                None => {
+                    let msg = format!("VM '{}' not registered in host config", vm_name);
+                    warn!(?peer_info, vm_name = %vm_name, "{}", msg);
+                    send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                    return Ok(());
+                }
+            };
+
+            if let Some(peer_cid) = peer_info.peer_cid {
+                if let Some(expected_cid) = vm_entry.vm_cid {
+                    if expected_cid != peer_cid {
+                        let msg = format!(
+                            "CID verification failed: expected {}, got peer CID {}",
+                            expected_cid, peer_cid
+                        );
+                        error!(?peer_info, vm_name = %vm_name, "{}", msg);
+                        send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                        return Ok(());
+                    }
+                }
+            }
+
+            info!(
+                ?peer_info,
+                vm_name = %vm_name,
+                "Subscribing agent connection to host notifications"
+            );
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentResponse>();
+            notification_registry.register(tx).await;
+
+            while let Some(msg) = rx.recv().await {
+                if let Err(e) = send_json(stream, &msg).await {
+                    tracing::debug!(
+                        ?peer_info,
+                        vm_name = %vm_name,
+                        error = %e,
+                        "Notification subscriber stream closed"
+                    );
+                    break;
+                }
+            }
+
+            Ok(())
+        }
         AgentRequest::Handshake {
             version,
             vm_name,

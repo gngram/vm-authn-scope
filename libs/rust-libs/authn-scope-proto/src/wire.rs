@@ -27,6 +27,10 @@ pub enum AgentRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client_nonce: Option<String>,
     },
+    SubscribeNotifications {
+        version: u32,
+        vm_name: String,
+    },
     /// Attestation response sent after receiving an AttestationChallenge.
     AttestationResponse {
         /// Base64-encoded TPMS_ATTEST bytes (contains nonce + PCR digest).
@@ -99,6 +103,10 @@ pub enum AgentResponse {
         server_attest: Option<String>,
         /// Base64-encoded Server TPMT_SIGNATURE bytes.
         server_signature: Option<String>,
+    },
+    #[serde(rename = "time_sync_notification")]
+    TimeSyncNotification {
+        timestamp: u64,
     },
     HandshakeOk {
         workloads: HashMap<String, WorkloadConfig>,

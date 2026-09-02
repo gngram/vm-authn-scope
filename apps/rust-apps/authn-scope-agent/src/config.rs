@@ -18,6 +18,9 @@ pub struct AgentConfig {
     /// The client port to bind to when dialing vsock.
     #[serde(default = "default_client_port")]
     pub client_port: u32,
+    /// The client port to bind to when subscribing to notifications over vsock (default: 902).
+    #[serde(default = "default_notification_port")]
+    pub notification_port: u32,
     /// Server address (e.g. "127.0.0.1:9000" or "server-host:9000") when using TCP transport.
     #[serde(default)]
     pub server_addr: Option<String>,
@@ -38,6 +41,10 @@ fn default_server_port() -> u32 {
 
 fn default_client_port() -> u32 {
     901
+}
+
+fn default_notification_port() -> u32 {
+    902
 }
 
 impl AgentConfig {

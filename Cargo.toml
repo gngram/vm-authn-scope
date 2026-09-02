@@ -5,7 +5,8 @@ members = [
     "libs/rust-libs/authn-scope-tpm",
     "apps/rust-apps/authn-scope-server",
     "apps/rust-apps/authn-scope-agent",
-    "libs/rust-libs/authn-scope-evaluator",
+    "testapp/authn-scope-evaluator",
+    "testapp/grpc-app-rust",
     "libs/rust-libs/authn-scope-workload",
     "apps/rust-apps/workload-test-workload",
     "apps/rust-apps/profiler",
@@ -17,6 +18,11 @@ resolver = "2"
 tokio        = { version = "1",    features = ["full"] }
 tokio-vsock  = { version = "0.5",  features = [] }
 rustls-pemfile = "2"
+
+# gRPC & Protobuf
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+prost = "0.13"
+tonic-build = "0.12"
 
 # X.509 / CSR — pure Rust, uses ring internally
 # x509-parser is needed for from_ca_cert_pem and CertificateSigningRequestParams::from_pem

@@ -17,6 +17,7 @@
 
     authScope = pkgs.callPackage ./nix/pkgs/authn-scope-rust.nix {};
     authScopeGo = pkgs.callPackage ./nix/pkgs/authn-scope-go.nix {};
+    grpcAppGo = pkgs.callPackage ./nix/pkgs/grpc-app-go.nix {};
 
     # Evaluate multi-language treefmt rules for this specific target system
     treefmtEval = treefmt-nix.lib.evalModule pkgs {
@@ -53,7 +54,7 @@
       tcp-dual-attestation-test = import ./nix/checks/tcp-dual-attestation-test.nix {
         inherit pkgs;
         nixosModules = self.nixosModules;
-        inherit authScope authScopeGo;
+        inherit authScope authScopeGo grpcAppGo;
       };
 
       profiler-test = import ./nix/checks/profiler-test.nix {

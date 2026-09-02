@@ -9,8 +9,14 @@ use tokio_vsock::VsockStream;
 use crate::config::AgentConfig;
 use crate::transport::TransportStream;
 
-/// Connect to the host CA server over vsock while binding the local port.
+/// Connect to the host CA server over vsock while binding the specified local port.
+#[allow(dead_code)]
 pub async fn connect_vsock(config: &AgentConfig) -> Result<TransportStream> {
+    connect_vsock_port(config, config.client_port).await
+}
+
+/// Connect to the host CA server over vsock while binding a custom local port.
+pub async fn connect_vsock_port(config: &AgentConfig, client_port: u32) -> Result<TransportStream> {
     let host_cid = std::env::var("VSOCK_HOST_CID")
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
@@ -24,11 +30,11 @@ pub async fn connect_vsock(config: &AgentConfig) -> Result<TransportStream> {
             return Err(std::io::Error::last_os_error().into());
         }
 
-        // Bind to the local port (e.g. 901)
+        // Bind to the local port (e.g. 901 or 902)
         let local_addr = libc::sockaddr_vm {
             svm_family: libc::AF_VSOCK as libc::sa_family_t,
             svm_reserved1: 0,
-            svm_port: config.client_port,
+            svm_port: client_port,
             svm_cid: libc::VMADDR_CID_ANY,
             svm_zero: [0; 4],
         };

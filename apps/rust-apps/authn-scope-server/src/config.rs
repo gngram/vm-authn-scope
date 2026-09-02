@@ -29,6 +29,9 @@ pub struct HostConfig {
     /// Expected peer port of the client agent (vsock only).
     #[serde(default = "default_peer_port")]
     pub peer_port: u32,
+    /// Expected notification peer port of the client agent (vsock only, default: 902).
+    #[serde(default = "default_notification_port")]
+    pub notification_port: u32,
 }
 
 fn default_transport() -> String {
@@ -41,6 +44,10 @@ fn default_server_port() -> u32 {
 
 fn default_peer_port() -> u32 {
     901
+}
+
+fn default_notification_port() -> u32 {
+    902
 }
 
 /// Per-VM configuration entry.

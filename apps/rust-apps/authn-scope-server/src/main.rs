@@ -22,11 +22,13 @@ use authn_scope_ca::CertificateAuthority;
 mod attestation;
 mod config;
 mod handler;
+mod notifications;
 mod policy;
 mod transport;
 
 use attestation::KnownVms;
 use config::HostConfig;
+use notifications::NotificationRegistry;
 
 /// authn-scope host CA server.
 #[derive(Debug, Parser)]
@@ -137,10 +139,25 @@ async fn main() {
 
     let cfg = Arc::new(cfg);
     let ca = Arc::new(ca);
+    let notification_registry = Arc::new(NotificationRegistry::new());
+
+    #[cfg(unix)]
+    {
+        let reg = Arc::clone(&notification_registry);
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut sigusr1) = signal(SignalKind::user_defined1()) {
+                while sigusr1.recv().await.is_some() {
+                    info!("Received SIGUSR1 signal — broadcasting time sync notification to agents");
+                    reg.notify_time_sync().await;
+                }
+            }
+        });
+    }
 
     let res = match cfg.transport.as_str() {
-        "tcp" => transport::tcp::run_tcp_listener(cfg, ca, known_vms).await,
-        _ => transport::vsock::run_vsock_listener(cfg, ca, known_vms).await,
+        "tcp" => transport::tcp::run_tcp_listener(cfg, ca, known_vms, notification_registry).await,
+        _ => transport::vsock::run_vsock_listener(cfg, ca, known_vms, notification_registry).await,
     };
 
     if let Err(e) = res {

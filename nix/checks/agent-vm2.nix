@@ -8,6 +8,7 @@
 }: let
   authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
   authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
+  grpcAppGo = pkgs.callPackage ../pkgs/grpc-app-go.nix {};
 
   evalTestScript = pkgs.writeShellScript "run-eval-test" ''
     set -e
@@ -41,6 +42,10 @@
       /workspace/test-result/ca-cert.pem \
       service-b
 
+    echo "==> [VM-2] Running Go gRPC test application (as service-b connecting to VM-1)..."
+    ${pkgs.util-linux}/bin/runuser -u service-b -- env USER=service-b \
+      ${grpcAppGo}/bin/grpc-app-go client 10.0.2.2:50052 /run/authn-scope/workload.sock > /workspace/test-result/vm2-grpc-app.log 2>&1
+
     echo SUCCESS > /workspace/test-result/vm2-result-summary
     echo "==> [VM-2] All tests passed! Leaving VM running for live inspection."
   '';
@@ -50,6 +55,8 @@ in {
   ];
 
   networking.hostName = "vm-2";
+  networking.firewall.allowedTCPPorts = [50052];
+  networking.firewall.enable = false;
   services.getty.autologinUser = "root";
 
   users.users.nixos = {
@@ -68,6 +75,7 @@ in {
   environment.systemPackages = [pkgs.tpm2-tools];
 
   virtualisation.vmVariant = {
+    virtualisation.writableStoreUseTmpfs = true;
     virtualisation.sharedDirectories.workspace = {
       source = toString ./../..;
       target = "/workspace";

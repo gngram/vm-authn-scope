@@ -14,80 +14,69 @@ Each **guest VM** runs an agent that authenticates with the host CA and exposes 
 | --- | --- |
 | Key algorithm | ECDSA P-256 (Leaf & CA) |
 | vsock transport | Length-prefixed JSON framing over vsock |
-| Trust Establishment | vTPM remote attestation (TPM2_Quote over PCRs 0, 1, 2, 3, 7) with TOFU |
+| Trust Establishment | vTPM remote attestation (`TPM2_Quote` over PCRs 0, 1, 2, 3, 7) with TOFU |
 | Config & State Integrity | Immutable Nix Store for `host.json` + Host TPM sealing of `known_vms.json` |
 | Credential Delivery | On-demand via local Workload API Unix Domain Socket (no disk storage) |
 | Credential Rotation | Automatic in-memory rotation at 50% certificate TTL (`ttl_minutes / 2`) |
 | Key generation | `--genkey` CLI flag (regenerates/overwrites CA keys and starts server in a single step) |
 | Process Attestation | Linux peer credentials (`SO_PEERCRED`), `/proc/<pid>/exe`, and `/proc/<pid>/cgroup` |
 | Server privilege enforcement | Requires root privilege to run (due to vsock bind constraints) |
+| Client TLS Mechanism | Production dynamic `GetClientCertificate` / `GetCertificate` TLS callbacks (Go & Rust) |
 
 ---
 
 ## Architecture
 
-![System Architecture Diagram #S#R](architecture_diagram.jpg)
+### System Architecture Overview
 
-### Complete Attestation & Certificate Issuance Flow
+![System Architecture Overview Diagram](images/architecture_diagram.jpg)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Workload as Workload (Process)
-    participant Agent as Guest Agent (authn-scope-agent)
-    participant vTPM as Guest vTPM (/dev/tpmrm0)
-    participant Server as Host CA (authn-scope-server)
-    participant HostTPM as Host TPM (/dev/tpmrm0)
+---
 
-    %% PHASE 1: Host Server Startup & Initialization
-    rect rgb(240, 245, 255)
-    Note over Server,HostTPM: Phase 1: Host Server Startup & Initialization
-    Server->>Server: Read immutable host.json from Nix Store (/nix/store/...)
-    Server->>HostTPM: Verify/Unseal known_vms.json hash from Host TPM (known_vms_seal.json)
-    Server->>Server: Initialize ECDSA P-256 Root CA & bind vsock:900
-    end
+## Execution Flows
 
-    %% PHASE 2: Guest Boot & Attestation Handshake
-    rect rgb(245, 255, 245)
-    Note over Agent,Server: Phase 2: Guest Boot & Hardware-Backed Attestation (TOFU)
-    Agent->>vTPM: Create/Load Attestation Key (AK) at handle 0x81010002
-    vTPM-->>Agent: Public AK (TPMT_PUBLIC)
-    Agent->>Server: Handshake { version: 2, vm_name: "local-vm", ak_pub } (vsock)
-    Server->>Server: Verify caller CID=3 & generate 32-byte secure random nonce
-    Server-->>Agent: AttestationChallenge { nonce }
-    Agent->>vTPM: TPM2_Quote(AK, nonce, PCRs 0, 1, 2, 3, 7)
-    vTPM-->>Agent: TPMS_ATTEST + RSA signature
-    Agent->>Server: AttestationResponse { attest, signature }
-    Server->>Server: Verify quote RSA signature & nonce (pure Rust)
-    Server->>Server: Check/Record PCRs in known_vms.json (TOFU)
-    Server-->>Agent: HandshakeOk { workloads: [service-a, service-b] }
-    Agent->>Agent: Bind protect listener to client port 901 & serve UDS /run/authn-scope/workload.sock
-    end
+### 1. vTPM Setup & Hardware Key Sealing Flow
 
-    %% PHASE 3: On-Demand Credential Issuance
-    rect rgb(255, 250, 240)
-    Note over Workload,Server: Phase 3: Workload Authentication & Certificate Issuance
-    Workload->>Agent: Connect to /run/authn-scope/workload.sock {"type": "fetch"}
-    Agent->>Agent: Inspect caller credentials (SO_PEERCRED, /proc/pid/exe, /proc/pid/cgroup)
-    Agent->>Agent: Match selectors -> resolve identity "service-a"
-    Agent->>Agent: Generate ephemeral ECDSA P-256 key pair & PKCS#10 CSR
-    Agent->>Server: CertRequest { vm_name: "local-vm", identity: "service-a", csr_pem } (from port 901)
-    Server->>Server: Validate identity authorized for CID=3 & sign leaf cert (TTL + IP SAN)
-    Server-->>Agent: CertOk { cert_pem, ca_cert_pem }
-    Agent->>Agent: Cache credentials in memory & re-bind port 901 listener
-    Agent-->>Workload: WorkloadResponse { cert_pem, key_pem, ca_cert_pem }
-    end
+![vTPM Setup and Hardware Key Sealing Flow Sequence Diagram](images/vtpm_setup_flow.jpg)
 
-    %% PHASE 4: Credential Rotation
-    rect rgb(250, 240, 255)
-    Note over Workload,Agent: Phase 4: Automatic In-Memory Credential Rotation
-    Workload->>Workload: Background rotation loop triggers at 50% TTL
-    Workload->>Agent: Connect to /run/authn-scope/workload.sock {"type": "fetch"}
-    Agent->>Server: Request renewed certificate from Host CA
-    Server-->>Agent: CertOk { new_cert_pem, ca_cert_pem }
-    Agent-->>Workload: Return rotated in-memory credentials
-    end
-```
+#### Technical Breakdown:
+1. **Host TPM Storage Primary Key (SRK)**: Host CA initializes SRK at persistent handle `0x81000000` via `/dev/tpmrm0`.
+2. **Configuration Sealing**: Computes SHA-256 hash of `known_vms.json` TOFU policy and seals state hash into `known_vms_seal.json` via `TPM2_Create` and `TPM2_EvictControl`.
+3. **Guest vTPM Key Persistence**: Guest agent opens `swtpm` character device `/dev/tpmrm0`, generates Primary Endorsement Key (EK), and creates a persistent Attestation Key (AK) at handle `0x81010002`.
+
+---
+
+### 2. Initial Remote Attestation Flow
+
+![Initial Remote Attestation Flow Sequence Diagram](images/remote_attestation_flow.jpg)
+
+#### Technical Breakdown:
+1. **vsock Handshake**: Guest agent connects to host CA over `vsock` port 900 (`version: 2`, `vm_name`, `ak_pub`). Server validates caller vsock CID matches VM configuration (e.g. CID=3 for VM-1).
+2. **Challenge-Response Nonce**: Host CA generates a cryptographically secure 32-byte random challenge nonce.
+3. **Hardware PCR Quote**: Guest agent invokes `TPM2_Quote` signed by persistent AK handle `0x81010002` over PCRs 0, 1, 2, 3, 7 and the challenge nonce.
+4. **Signature & Policy Verification**: Host CA verifies the RSA signature over `TPMS_ATTEST` using `ak_pub`, asserts nonce equivalence, and validates PCR measurements against `known_vms.json` TOFU policy.
+
+---
+
+### 3. Certificate Issuance & Automatic Dynamic Rotation Flow
+
+![Certificate Issuance and Automatic Dynamic Rotation Flow Sequence Diagram](images/cert_issuance_rotation_flow.jpg)
+
+#### Technical Breakdown:
+1. **Process Selector Inspection**: Local process connects to UDS `/run/authn-scope/workload.sock`. Guest agent validates caller process credentials via `SO_PEERCRED`, `/proc/<pid>/exe`, and `/proc/<pid>/cgroup`.
+2. **CSR & Issuance**: Agent generates an in-memory ECDSA P-256 keypair, submits PKCS#10 CSR to host CA over vsock port 901, and returns leaf X.509 certificate.
+3. **Production Dynamic TLS Callbacks**: Workload process starts background `StartRotationLoop(5s)` and uses `GetClientCertificate` (Go) / dynamic cert resolver (Rust) to hot-swap updated certificates in RAM at 50% TTL threshold without application restarts or connection re-dials.
+
+---
+
+### 4. Time Sync Management Flow
+
+![Time Sync Management Flow Sequence Diagram](images/time_sync_management_flow.jpg)
+
+#### Technical Breakdown:
+1. **vsock Notification Subscription**: Guest agent subscribes to host notifications over `vsock` port 900 streaming channel (`SubscribeNotifications`).
+2. **Host Clock Shift Detection**: Host CA monitors system time shifts / NTP sync events and broadcasts `TimeSyncNotification` containing new timestamp and calculated skew offset.
+3. **Guest Adjustment**: Guest agent logs notification, adjusts validity offset calculation, and triggers immediate credential refresh if certificate `NotBefore` exceeds guest local clock.
 
 ---
 
@@ -174,6 +163,25 @@ A length-prefixed JSON protocol over the vsock channel:
 }
 ```
 
+### 7. Subscribe Notifications Request (agent → server)
+
+```json
+{
+  "type": "subscribe_notifications",
+  "version": 2,
+  "vm_name": "local-vm"
+}
+```
+
+### 8. Time Sync Notification (server → agent)
+
+```json
+{
+  "status": "time_sync_notification",
+  "timestamp": 1756740000
+}
+```
+
 ---
 
 ## Configuration Schema
@@ -241,6 +249,10 @@ authn-scope/
 ├── Cargo.toml               # workspace root
 ├── Cargo.lock
 │
+├── docs/
+│   ├── design.md            # design specification & embedded sequence diagrams
+│   └── images/              # rendered architectural & sequence diagram images
+│
 ├── libs/
 │   ├── rust-libs/
 │   │   ├── authn-scope-proto/     # wire types, framing codecs, protocol versions
@@ -251,6 +263,11 @@ authn-scope/
 │   └── go-libs/
 │       ├── authn-scope-workload/  # Go client library for Workload API
 │       └── authn-scope-evaluator/ # Go certificate verification library
+│
+├── testapp/
+│   ├── proto/                     # shared echo.proto gRPC service definition
+│   ├── grpc-app-rust/             # Rust gRPC test workload (tonic + prost + mTLS)
+│   └── grpc-app-go/               # Go gRPC test workload (google.golang.org/grpc + mTLS)
 │
 └── apps/
     └── rust-apps/

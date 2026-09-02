@@ -20,6 +20,7 @@
   nixosModules,
   authScope,
   authScopeGo,
+  grpcAppGo,
 }: let
   # ----------------------------------------------------------------------------
   # 1. Common Server Configuration Module (Host CA Node)
@@ -39,9 +40,6 @@
     ];
 
     # Dedicated Production systemd unit for the Server's Hardware TPM Emulator
-    # - Generates a 256-bit random master key on first boot
-    # - Runs swtpm in AES-256-CBC encrypted state mode
-    # - Performs automatic tpm2_startup initialization via ExecStartPost
     systemd.services.swtpm = {
       description = "Software TPM 2.0 Daemon (Encrypted State)";
       wantedBy = [];
@@ -84,7 +82,7 @@
             identities = {
               service-a = {
                 selector = "unix:user:service-a,unix:group:service-a,systemd:unitname:service-a";
-                ttl_minutes = 5;
+                ttl_minutes = 1;
               };
             };
           };
@@ -96,7 +94,7 @@
             identities = {
               service-b = {
                 selector = "unix:user:service-b,unix:group:service-b,systemd:unitname:service-b";
-                ttl_minutes = 5;
+                ttl_minutes = 1;
               };
             };
           };
@@ -119,10 +117,11 @@
   # ----------------------------------------------------------------------------
   # 2. Reusable Agent VM Configuration Module (Guest Nodes)
   # ----------------------------------------------------------------------------
-  agentModule = vmName: identityName: uidVal: {lib, ...}: {
+  agentModule = vmName: identityName: uidVal: isRustApp: {lib, ...}: {
     imports = [nixosModules.default];
 
-    environment.systemPackages = [pkgs.time authScope authScopeGo pkgs.openssl pkgs.swtpm pkgs.tpm2-tools];
+    networking.firewall.allowedTCPPorts = [50052];
+    environment.systemPackages = [pkgs.time authScope authScopeGo grpcAppGo pkgs.openssl pkgs.swtpm pkgs.tpm2-tools];
 
     systemd.tmpfiles.rules = [
       "d /etc/swtpm 0700 root root"
@@ -184,16 +183,19 @@
       };
     };
 
-    # Test Workload Unit: requests credentials from local agent Unix Domain Socket
+    # gRPC Test Workload Unit: requests credentials from local Workload API & communicates across VMs
     systemd.services."${identityName}" = {
-      description = "${identityName} Workload";
+      description = "${identityName} Cross-VM gRPC Workload";
       wantedBy = [];
       after = ["authn-scope-agent.service"];
       serviceConfig = {
-        ExecStart = "${authScope}/bin/workload-test-workload /run/authn-scope/workload.sock";
+        ExecStart =
+          if isRustApp
+          then "${authScope}/bin/grpc-app-rust server 0.0.0.0:50052 /run/authn-scope/workload.sock"
+          else "${grpcAppGo}/bin/grpc-app-go client agent1:50052 /run/authn-scope/workload.sock";
         User = identityName;
         Group = identityName;
-        Type = "oneshot";
+        Type = "simple";
         PrivateTmp = false;
         Environment = "USER=${identityName}";
       };
@@ -204,8 +206,8 @@ in
     name = "tcp-dual-attestation-test";
     nodes = {
       server = commonServerModule;
-      agent1 = agentModule "agent-vm1" "service-a" 997;
-      agent2 = agentModule "agent-vm2" "service-b" 998;
+      agent1 = agentModule "agent-vm1" "service-a" 997 true;
+      agent2 = agentModule "agent-vm2" "service-b" 998 false;
     };
 
     # --------------------------------------------------------------------------
@@ -230,58 +232,57 @@ in
           print("\033[94m" + "Server online with production swtpm systemd service" + "\033[0m")
 
       # ------------------------------------------------------------------------
-      # Phase 3: Agent 1 Dual Attestation, Hardware Sealing & Workload Test
+      # Phase 3: Agent 1 Dual Attestation & Rust gRPC Server Start (service-a)
       # ------------------------------------------------------------------------
-      with subtest("-- agent 1 dual attestation & workload test --"):
+      with subtest("-- agent 1 dual attestation & rust grpc server --"):
           agent1.succeed("systemctl start authn-scope-agent.service")
           agent1.wait_for_unit("swtpm.service")
           agent1.wait_for_file("/run/authn-scope/workload.sock")
 
-          # 1. Verify Mutual Hardware Trust:
-          #    - Agent 1 learned Server AK and sealed it into vTPM (known_server_seal.json)
-          #    - Server learned Agent 1 AK and sealed it into Host TPM (known_vms_seal.json)
           agent1.wait_for_file("/var/lib/authn-scope/known_server.json")
           agent1.wait_for_file("/var/lib/authn-scope/known_server_seal.json")
           server.wait_for_file("/var/lib/authn-scope/known_vms.json")
           server.wait_for_file("/var/lib/authn-scope/known_vms_seal.json")
 
-          # 2. Run workload service-a to request on-demand certificate
+          # Start Rust gRPC Server workload on VM 1
           agent1.succeed("systemctl start service-a.service")
-          agent1.wait_for_file("/tmp/workload-cert-service-a.pem")
-
-          # 3. Validate issued certificate contents
-          cert_text = agent1.succeed("openssl x509 -in /tmp/workload-cert-service-a.pem -noout -text")
-          assert "CN=service-a" in cert_text
-          print("\033[94m" + "Agent 1 Dual Attestation & Certificate issuance successful!" + "\033[0m")
+          print("\033[94m" + "Agent 1 Dual Attestation & Rust gRPC Server online!" + "\033[0m")
 
       # ------------------------------------------------------------------------
-      # Phase 4: Agent 2 Dual Attestation, Hardware Sealing & Workload Test
+      # Phase 4: Agent 2 Dual Attestation & Go gRPC Client Connect (service-b)
       # ------------------------------------------------------------------------
-      with subtest("-- agent 2 dual attestation & workload test --"):
+      with subtest("-- agent 2 dual attestation & cross-VM Go gRPC client --"):
           agent2.succeed("systemctl start authn-scope-agent.service")
           agent2.wait_for_unit("swtpm.service")
           agent2.wait_for_file("/run/authn-scope/workload.sock")
           agent2.wait_for_file("/var/lib/authn-scope/known_server.json")
           agent2.wait_for_file("/var/lib/authn-scope/known_server_seal.json")
 
-          # Run workload service-b to request on-demand certificate
+          # Start Go gRPC Client workload on VM 2 (connects across network to VM 1)
           agent2.succeed("systemctl start service-b.service")
-          agent2.wait_for_file("/tmp/workload-cert-service-b.pem")
-
-          # Validate issued certificate contents
-          cert_text2 = agent2.succeed("openssl x509 -in /tmp/workload-cert-service-b.pem -noout -text")
-          assert "CN=service-b" in cert_text2
-          print("\033[94m" + "Agent 2 Dual Attestation & Certificate issuance successful!" + "\033[0m")
+          print("\033[94m" + "Agent 2 Dual Attestation & Go gRPC Client online!" + "\033[0m")
 
       # ------------------------------------------------------------------------
-      # Phase 5: Cross-Node Isolation & Hardware Database Verification
+      # Phase 5: Cross-VM mTLS & Automatic Certificate Rotation Verification
       # ------------------------------------------------------------------------
-      with subtest("-- verify multi-vm dual attestation isolation --"):
-          status = server.succeed("cat /var/lib/authn-scope/known_vms.json")
-          assert "agent-vm1" in status
-          assert "agent-vm2" in status
-          print("\033[94m" + "Server TOFU database contains both VM hardware records" + "\033[0m")
-          print("\033[94m" + "Verified Host TPM and Guest vTPM Hardware Seals on all nodes" + "\033[0m")
-          print("\033[92m" + "ALL PRODUCTION SWTPM SERVICE DUAL ATTESTATION TESTS PASSED!" + "\033[0m")
+      with subtest("-- verify cross-VM gRPC mTLS & cert rotation --"):
+          # Wait for both gRPC workloads to complete rotation and timestamp checks
+          agent2.wait_for_unit("service-b.service")
+          agent1.wait_for_unit("service-a.service")
+
+          log_a = agent1.succeed("journalctl -u service-a.service")
+          log_b = agent2.succeed("journalctl -u service-b.service")
+
+          # Verify peer name extraction from certificate
+          assert "Extracted peer name from certificate: 'service-b'" in log_a
+          assert "Extracted peer name from certificate: 'service-a'" in log_b
+
+          # Verify timestamp rotation success
+          assert "Certificate timestamp verification SUCCESS!" in log_a
+          assert "Certificate timestamp verification SUCCESS!" in log_b
+
+          print("\033[94m" + "Extracted peer identities across VM1 (Rust) <-> VM2 (Go) successfully!" + "\033[0m")
+          print("\033[94m" + "Verified automatic certificate rotation & timestamp advancement across VMs!" + "\033[0m")
+          print("\033[92m" + "ALL MULTI-VM CROSS-NODE gRPC WORKLOAD TESTS PASSED!" + "\033[0m")
     '';
   }

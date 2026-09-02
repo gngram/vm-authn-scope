@@ -61,8 +61,16 @@ impl AsyncWrite for TransportStream {
 pub async fn connect_to_server(
     config: &crate::config::AgentConfig,
 ) -> anyhow::Result<TransportStream> {
+    connect_to_server_port(config, config.client_port).await
+}
+
+/// Connect to the CA server using a specific local client port.
+pub async fn connect_to_server_port(
+    config: &crate::config::AgentConfig,
+    client_port: u32,
+) -> anyhow::Result<TransportStream> {
     match config.transport.as_str() {
         "tcp" => tcp::connect_tcp(config).await,
-        _ => vsock::connect_vsock(config).await,
+        _ => vsock::connect_vsock_port(config, client_port).await,
     }
 }

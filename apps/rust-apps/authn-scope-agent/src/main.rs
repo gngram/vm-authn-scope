@@ -49,9 +49,9 @@ async fn main() {
         )
         .init();
 
-    // Require root for file ownership operations.
+    // Require root for file ownership operations (unless AUTHN_SCOPE_ALLOW_NON_ROOT is set).
     #[cfg(unix)]
-    if unsafe { libc_getuid() } != 0 {
+    if unsafe { libc_getuid() } != 0 && std::env::var("AUTHN_SCOPE_ALLOW_NON_ROOT").is_err() {
         error!("authn-scope-agent must run as root to set file ownership");
         process::exit(1);
     }
