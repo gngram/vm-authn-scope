@@ -15,6 +15,8 @@ pkgs.mkShell {
     swtpm
     openssl
     protobuf
+    protoc-gen-go
+    protoc-gen-go-grpc
     geany
     mousepad
   ];
@@ -28,7 +30,7 @@ pkgs.mkShell {
 
     echo -e "\n\033[1;32m            -- development shell for vm-authn-scope -- \033[0m\n"
     echo -e "\033[1;33mCommands:\033[0m"
-    echo -e "\033[1;34mrun-integration-test:\033[0m          Execute the test suite for integration verification."
+    echo -e "\033[1;34mrun-integration-test:\033[0m          Execute the test suite (pass --inspect to keep VMs open)."
     echo -e "\033[1;34mrun-nixos-module-test:\033[0m         Execute NixOS tests to validate system modules."
     echo -e "\033[1;34mrun-tcp-dual-attestation-test:\033[0m Run multi-VM TCP dual attestation & hardware sealing test."
     echo -e "\033[1;34mrun-profiler:\033[0m                  Run profiler."

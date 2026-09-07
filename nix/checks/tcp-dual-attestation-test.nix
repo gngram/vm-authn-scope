@@ -267,8 +267,8 @@ in
       # ------------------------------------------------------------------------
       with subtest("-- verify cross-VM gRPC mTLS & cert rotation --"):
           # Wait for both gRPC workloads to complete rotation and timestamp checks
-          agent2.wait_for_unit("service-b.service")
-          agent1.wait_for_unit("service-a.service")
+          agent2.wait_until_succeeds("journalctl -u service-b.service | grep 'All gRPC mTLS & Certificate Rotation checks PASSED'", timeout=180)
+          agent1.wait_until_succeeds("journalctl -u service-a.service | grep 'All gRPC mTLS & Certificate Rotation checks PASSED'", timeout=180)
 
           log_a = agent1.succeed("journalctl -u service-a.service")
           log_b = agent2.succeed("journalctl -u service-b.service")

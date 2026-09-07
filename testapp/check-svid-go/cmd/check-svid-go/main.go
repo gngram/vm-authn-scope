@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	evaluator "authn-scope-evaluator"
+	evaluator "check-svid-go"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("[Go Evaluator] Successfully verified certificate for Identity: %s\n", eval.Identity)
+	fmt.Printf("[check-svid-go] Successfully verified certificate for Identity: %s\n", eval.Identity)
 
 	if len(os.Args) == 4 {
 		expected := os.Args[3]
@@ -49,5 +49,5 @@ func main() {
 		}
 	}
 
-	fmt.Println("[Go Evaluator] All tests passed!")
+	fmt.Println("[check-svid-go] All tests passed!")
 }

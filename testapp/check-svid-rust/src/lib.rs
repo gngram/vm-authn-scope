@@ -85,6 +85,7 @@ mod tests {
                 identity: "peer-service".into(),
                 vm_name: "peer-vm".into(),
                 cid: 10,
+                trust_domain: Some("example.org"),
                 ip: Some("127.0.0.1".into()),
                 validity_seconds: 3600,
             },

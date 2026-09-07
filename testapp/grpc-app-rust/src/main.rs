@@ -1,5 +1,14 @@
+macro_rules! log_msg {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+        println!($($arg)*);
+        std::io::stdout().flush().ok();
+    }};
+}
+
 use anyhow::{Context, Result, bail};
-use authn_scope_workload::WorkloadClient;
+use base64::Engine;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::{env, time::Duration};
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, Server, ServerTlsConfig};
@@ -28,27 +37,25 @@ impl EchoService for MyEchoService {
 
         if let Some(certs) = request.peer_certs() {
             if let Some(cert) = certs.first() {
-                if let Ok((_, pem)) = parse_x509_pem(cert.as_ref()) {
-                    if let Ok(x509) = pem.parse_x509() {
-                        if let Some(cn) = x509
-                            .subject()
-                            .iter_common_name()
-                            .next()
-                            .and_then(|c| c.as_str().ok())
-                        {
-                            peer_cn = cn.to_string();
-                        }
+                if let Ok((_, x509)) = x509_parser::parse_x509_certificate(cert.as_ref()) {
+                    if let Some(cn) = x509
+                        .subject()
+                        .iter_common_name()
+                        .next()
+                        .and_then(|c| c.as_str().ok())
+                    {
+                        peer_cn = cn.to_string();
                     }
                 }
             }
         }
 
         let req_msg = request.into_inner();
-        println!(
+        log_msg!(
             "[Rust App] Extracted peer name from mTLS certificate: '{}'",
             peer_cn
         );
-        println!(
+        log_msg!(
             "[Rust App] Received gRPC message from '{}': {}",
             peer_cn, req_msg.message
         );
@@ -60,8 +67,96 @@ impl EchoService for MyEchoService {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X509Credentials {
+    pub spiffe_id: String,
+    pub cert_pem: String,
+    pub key_pem: String,
+    pub ca_cert_pem: String,
+}
+
+fn der_to_pem(tag: &str, der: &[u8]) -> String {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut pem = format!("-----BEGIN {}-----\n", tag);
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(chunk).unwrap());
+        pem.push('\n');
+    }
+    pem.push_str(&format!("-----END {}-----\n", tag));
+    pem
+}
+
+fn creds_from_source(source: &spiffe::X509Source) -> Result<X509Credentials> {
+    let svid = source.svid().context("Failed to get SVID from X509Source")?;
+    let mut cert_pem = String::new();
+    for cert in svid.cert_chain() {
+        cert_pem.push_str(&der_to_pem("CERTIFICATE", cert.as_bytes()));
+    }
+    let key_pem = der_to_pem("PRIVATE KEY", svid.private_key().as_bytes());
+
+    let trust_domain = svid.spiffe_id().trust_domain();
+    let bundle_set = source.bundle_set().context("Failed to get bundle set from X509Source")?;
+    let mut ca_cert_pem = String::new();
+    if let Some(bundle) = bundle_set.get(trust_domain) {
+        for authority in bundle.authorities() {
+            ca_cert_pem.push_str(&der_to_pem("CERTIFICATE", authority.as_bytes()));
+        }
+    }
+
+    if ca_cert_pem.is_empty() {
+        bail!("Failed to extract CA certificate bundle from SPIFFE X509Source");
+    }
+
+    Ok(X509Credentials {
+        spiffe_id: svid.spiffe_id().to_string(),
+        cert_pem,
+        key_pem,
+        ca_cert_pem,
+    })
+}
+
+async fn create_x509_source_retry(socket_path: &str) -> Result<spiffe::X509Source> {
+    let endpoint_str = if socket_path.starts_with("unix:") || socket_path.starts_with("tcp:") {
+        socket_path.to_string()
+    } else {
+        format!("unix://{}", socket_path)
+    };
+
+    let mut last_err = None;
+    for i in 1..=60 {
+        match spiffe::X509Source::builder()
+            .endpoint(&endpoint_str)
+            .initial_sync_timeout(Duration::from_secs(5))
+            .build()
+            .await
+        {
+            Ok(source) => {
+                log_msg!(
+                    "[Rust App] Established connection to SPIFFE Workload API UDS socket at '{}' via official SPIFFE SDK on attempt {}",
+                    endpoint_str, i
+                );
+                return Ok(source);
+            }
+            Err(e) => {
+                log_msg!(
+                    "[Rust App] [ATTEMPT {}/60] Connecting to SPIFFE Workload API UDS at '{}' failed: {:?}",
+                    i, endpoint_str, e
+                );
+                last_err = Some(e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+    bail!(
+        "Failed to connect to SPIFFE Workload API via official SPIFFE SDK after 60 attempts: {:?}",
+        last_err
+    );
+}
+
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let args: Vec<String> = env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("server");
     let addr = args.get(2).map(|s| s.as_str()).unwrap_or("127.0.0.1:50051");
@@ -70,27 +165,24 @@ async fn main() -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("/run/authn-scope/workload.sock");
 
-    println!(
-        "[Rust App] Starting gRPC test app using tonic in mode '{}' at {} with Background Rotation Loop",
+    log_msg!(
+        "[Rust App] Starting gRPC test app using official SPIFFE SDK X509Source in mode '{}' at {}",
         mode, addr
     );
-    let workload_client = WorkloadClient::new(socket_path);
 
-    let creds1 = fetch_credentials_retry(&workload_client).await?;
+    let source = create_x509_source_retry(socket_path).await?;
+    let creds1 = creds_from_source(&source)?;
     let (cn1, not_before1, not_after1) = parse_cert_info(&creds1.cert_pem)?;
 
-    // Start background rotation loop (updates current credentials in memory automatically)
-    workload_client.start_rotation_loop(Duration::from_secs(5));
-
-    println!(
-        "[Rust App] Initial credentials loaded into background rotation cache. CN='{}', NotBefore={}, NotAfter={}",
-        cn1, not_before1, not_after1
+    log_msg!(
+        "[Rust App] Initial credentials loaded via SPIFFE X509Source. SPIFFE ID='{}', CN='{}', NotBefore={}, NotAfter={}",
+        creds1.spiffe_id, cn1, not_before1, not_after1
     );
 
     if mode == "server" {
-        run_server(addr, &workload_client, creds1, not_before1).await?;
+        run_server(addr, &source, creds1, not_before1).await?;
     } else {
-        run_client(addr, &workload_client, creds1, not_before1).await?;
+        run_client(addr, &source, creds1, not_before1).await?;
     }
 
     Ok(())
@@ -98,46 +190,65 @@ async fn main() -> Result<()> {
 
 async fn run_server(
     addr: &str,
-    workload_client: &WorkloadClient,
-    initial_creds: authn_scope_workload::X509Credentials,
+    source: &spiffe::X509Source,
+    initial_creds: X509Credentials,
     initial_not_before: i64,
 ) -> Result<()> {
+    let socket_addr: SocketAddr = addr.parse()?;
+
+    let server = MyEchoService {
+        server_cn: "grpc-app".to_string(),
+    };
+
+    let cert = Certificate::from_pem(&initial_creds.ca_cert_pem);
     let identity = Identity::from_pem(&initial_creds.cert_pem, &initial_creds.key_pem);
-    let client_ca = Certificate::from_pem(&initial_creds.ca_cert_pem);
 
     let tls_config = ServerTlsConfig::new()
         .identity(identity)
-        .client_ca_root(client_ca);
+        .client_ca_root(cert);
 
-    let echo_service = MyEchoService {
-        server_cn: "service-a".to_string(),
-    };
+    log_msg!(
+        "[Rust App] gRPC Server (tonic) listening at {} with mTLS",
+        addr
+    );
 
-    println!("[Rust App] gRPC Server (tonic with mTLS) listening at {}", addr);
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-    let addr_parsed: SocketAddr = addr.parse()?;
-    tokio::spawn(async move {
-        Server::builder()
+    let server_handle = tokio::spawn(async move {
+        let res = Server::builder()
             .tls_config(tls_config)
-            .unwrap()
-            .add_service(EchoServiceServer::new(echo_service))
-            .serve(addr_parsed)
-            .await
-            .unwrap();
+            .expect("failed to build ServerTlsConfig")
+            .add_service(EchoServiceServer::new(server))
+            .serve_with_shutdown(socket_addr, async {
+                rx.await.ok();
+            })
+            .await;
+        if let Err(e) = res {
+            log_msg!("[Rust App] Server error: {:?}", e);
+        }
     });
 
-    // Wait 32 seconds while background rotation loop updates credentials in memory
-    println!("[Rust App] Waiting 32 seconds for automatic certificate rotation threshold...");
+    log_msg!("[Rust App] Waiting 32 seconds for automatic certificate rotation threshold...");
     tokio::time::sleep(Duration::from_secs(32)).await;
 
-    // Separate fetch from Workload API ONLY for test assertion
-    let assertion_creds = workload_client
-        .fetch_credentials()
-        .await
-        .context("Separate assertion fetch failed")?;
-    let (cn2, not_before2, not_after2) = parse_cert_info(&assertion_creds.cert_pem)?;
+    let assertion_creds = creds_from_source(source)?;
+    let (mut cn2, mut not_before2, mut not_after2) = parse_cert_info(&assertion_creds.cert_pem)?;
 
-    println!(
+    for _ in 0..15 {
+        if not_before2 > initial_not_before {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Ok(c) = creds_from_source(source) {
+            if let Ok((cn, nb, na)) = parse_cert_info(&c.cert_pem) {
+                cn2 = cn;
+                not_before2 = nb;
+                not_after2 = na;
+            }
+        }
+    }
+
+    log_msg!(
         "[Rust App] Separate assertion fetch complete. CN='{}', NotBefore={}, NotAfter={}",
         cn2, not_before2, not_after2
     );
@@ -149,82 +260,91 @@ async fn run_server(
             not_before2
         );
     }
-    println!(
+
+    log_msg!(
         "[Rust App] Certificate timestamp verification SUCCESS! Initial NotBefore: {}, Rotated NotBefore: {} (Advanced by {}s)",
         initial_not_before,
         not_before2,
         not_before2 - initial_not_before
     );
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    println!("[Rust App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!");
+    tokio::time::sleep(Duration::from_secs(15)).await;
+    let _ = tx.send(());
+    let _ = server_handle.await;
+
+    log_msg!("[Rust App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!");
     Ok(())
 }
 
 async fn run_client(
     addr: &str,
-    workload_client: &WorkloadClient,
-    initial_creds: authn_scope_workload::X509Credentials,
+    source: &spiffe::X509Source,
+    initial_creds: X509Credentials,
     initial_not_before: i64,
 ) -> Result<()> {
-    let client_identity = Identity::from_pem(&initial_creds.cert_pem, &initial_creds.key_pem);
-    let server_ca = Certificate::from_pem(&initial_creds.ca_cert_pem);
+    let mut client1 = None;
+    for _ in 0..60 {
+        let cert = Certificate::from_pem(&initial_creds.ca_cert_pem);
+        let identity = Identity::from_pem(&initial_creds.cert_pem, &initial_creds.key_pem);
 
-    let tls_config1 = ClientTlsConfig::new()
-        .domain_name("service-a")
-        .identity(client_identity)
-        .ca_certificate(server_ca);
+        let tls_config = ClientTlsConfig::new()
+            .domain_name("grpc-app")
+            .identity(identity)
+            .ca_certificate(cert);
 
-    let mut attempts = 0;
-    let channel1 = loop {
-        match Endpoint::from_shared(format!("https://{}", addr))?
-            .tls_config(tls_config1.clone())?
-            .connect()
-            .await
-        {
-            Ok(c) => break c,
-            Err(e) => {
-                if attempts < 60 {
-                    attempts += 1;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                }
-                return Err(e).context(format!("Failed to connect to gRPC server at {} via mTLS", addr));
-            }
+        let endpoint = Endpoint::from_shared(format!("https://{}", addr))?.tls_config(tls_config)?;
+
+        if let Ok(c) = EchoServiceClient::connect(endpoint).await {
+            client1 = Some(c);
+            break;
         }
-    };
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 
-    println!("[Rust App] Connected to gRPC server at {} via mTLS (Pre-Rotation Connection 1)", addr);
+    let mut client1 = client1.context("failed to connect to gRPC server via mTLS")?;
+    log_msg!(
+        "[Rust App] Connected to gRPC server at {} via mTLS (Pre-Rotation Connection 1)",
+        addr
+    );
 
-    let mut echo_client1 = EchoServiceClient::new(channel1);
-    let response1 = echo_client1
+    let response1 = client1
         .echo(EchoRequest {
-            message: "gRPC Hello via Production mTLS Setup (Pre-Rotation)".into(),
+            message: "gRPC Hello via mTLS (Pre-Rotation)".to_string(),
         })
-        .await?;
+        .await?
+        .into_inner();
 
-    let resp1_inner = response1.into_inner();
-    println!(
+    log_msg!(
         "[Rust App] Extracted peer name from certificate: '{}'",
-        resp1_inner.peer_identity
+        response1.peer_identity
     );
-    println!(
+    log_msg!(
         "[Rust App] Received gRPC response: {}",
-        resp1_inner.message
+        response1.message
     );
 
-    // Wait 32 seconds while background rotation loop updates credentials in memory
-    println!("[Rust App] Waiting 32 seconds for automatic certificate rotation threshold...");
+    log_msg!("[Rust App] Waiting 32 seconds for automatic certificate rotation threshold...");
     tokio::time::sleep(Duration::from_secs(32)).await;
 
-    // Separate fetch from Workload API ONLY for test assertion
-    let assertion_creds = workload_client
-        .fetch_credentials()
-        .await
-        .context("Separate assertion fetch failed")?;
-    let (cn2, not_before2, not_after2) = parse_cert_info(&assertion_creds.cert_pem)?;
+    let mut assertion_creds = creds_from_source(source)?;
+    let (mut cn2, mut not_before2, mut not_after2) = parse_cert_info(&assertion_creds.cert_pem)?;
 
-    println!(
+    for _ in 0..15 {
+        if not_before2 > initial_not_before {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Ok(c) = creds_from_source(source) {
+            if let Ok((cn, nb, na)) = parse_cert_info(&c.cert_pem) {
+                assertion_creds = c;
+                cn2 = cn;
+                not_before2 = nb;
+                not_after2 = na;
+            }
+        }
+    }
+
+    log_msg!(
         "[Rust App] Separate assertion fetch complete. CN='{}', NotBefore={}, NotAfter={}",
         cn2, not_before2, not_after2
     );
@@ -236,90 +356,67 @@ async fn run_client(
             not_before2
         );
     }
-    println!(
+
+    log_msg!(
         "[Rust App] Certificate timestamp verification SUCCESS! Initial NotBefore: {}, Rotated NotBefore: {} (Advanced by {}s)",
         initial_not_before,
         not_before2,
         not_before2 - initial_not_before
     );
 
-    // Fetch the rotated credentials from background rotation cache
-    let rotated_creds = workload_client
-        .current_credentials()
-        .await
-        .unwrap_or(assertion_creds);
-
-    let rotated_identity = Identity::from_pem(&rotated_creds.cert_pem, &rotated_creds.key_pem);
-    let rotated_ca = Certificate::from_pem(&rotated_creds.ca_cert_pem);
+    let current_creds = creds_from_source(source).unwrap_or(assertion_creds);
+    let cert2 = Certificate::from_pem(&current_creds.ca_cert_pem);
+    let identity2 = Identity::from_pem(&current_creds.cert_pem, &current_creds.key_pem);
 
     let tls_config2 = ClientTlsConfig::new()
-        .domain_name("service-a")
-        .identity(rotated_identity)
-        .ca_certificate(rotated_ca);
+        .domain_name("grpc-app")
+        .identity(identity2)
+        .ca_certificate(cert2);
 
-    let channel2 = Endpoint::from_shared(format!("https://{}", addr))?
-        .tls_config(tls_config2)?
-        .connect()
-        .await?;
+    let endpoint2 = Endpoint::from_shared(format!("https://{}", addr))?.tls_config(tls_config2)?;
 
-    let mut echo_client2 = EchoServiceClient::new(channel2);
-    let response2 = echo_client2
+    let mut client2 = EchoServiceClient::connect(endpoint2)
+        .await
+        .context("failed to connect post-rotation")?;
+
+    log_msg!(
+        "[Rust App] Connected to gRPC server at {} via mTLS (Post-Rotation Connection 2)",
+        addr
+    );
+
+    let response2 = client2
         .echo(EchoRequest {
-            message: "gRPC Hello via Production mTLS Setup (Post-Rotation)".into(),
+            message: "gRPC Hello via mTLS (Post-Rotation)".to_string(),
         })
-        .await?;
+        .await?
+        .into_inner();
 
-    let resp2_inner = response2.into_inner();
-    println!(
+    log_msg!(
         "[Rust App] Extracted post-rotation peer name: '{}'",
-        resp2_inner.peer_identity
+        response2.peer_identity
     );
-    println!(
+    log_msg!(
         "[Rust App] Received post-rotation gRPC response: {}",
-        resp2_inner.message
+        response2.message
     );
 
-    println!("[Rust App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!");
+    log_msg!("[Rust App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!");
     Ok(())
 }
 
 fn parse_cert_info(cert_pem: &str) -> Result<(String, i64, i64)> {
-    let (_, pem) = parse_x509_pem(cert_pem.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Failed to parse PEM: {:?}", e))?;
-    let x509 = pem
-        .parse_x509()
-        .map_err(|e| anyhow::anyhow!("Failed to parse X.509: {:?}", e))?;
-
+    let (_, pem) = parse_x509_pem(cert_pem.as_bytes())?;
+    let x509 = pem.parse_x509()?;
     let cn = x509
         .subject()
         .iter_common_name()
         .next()
-        .and_then(|cn| cn.as_str().ok())
+        .and_then(|c| c.as_str().ok())
         .unwrap_or("unknown")
         .to_string();
 
-    let validity = x509.validity();
-    let not_before = validity.not_before.timestamp();
-    let not_after = validity.not_after.timestamp();
+    let not_before = x509.validity().not_before.timestamp();
+    let not_after = x509.validity().not_after.timestamp();
 
     Ok((cn, not_before, not_after))
-}
-
-async fn fetch_credentials_retry(
-    client: &WorkloadClient,
-) -> Result<authn_scope_workload::X509Credentials> {
-    let mut attempts = 0;
-    loop {
-        match client.fetch_credentials().await {
-            Ok(c) => return Ok(c),
-            Err(e) => {
-                if attempts < 40 {
-                    attempts += 1;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                }
-                return Err(e).context("Workload API fetch credentials failed after retries");
-            }
-        }
-    }
 }

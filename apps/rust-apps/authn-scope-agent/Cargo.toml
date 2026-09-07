@@ -9,10 +9,15 @@ path = "src/main.rs"
 
 [dependencies]
 authn-scope-proto = { workspace = true }
-authn-scope-workload = { workspace = true }
 authn-scope-tpm   = { workspace = true }
 tokio            = { workspace = true }
+tokio-stream     = "0.1"
 tokio-vsock      = { workspace = true }
+hyper-util       = "0.1"
+async-stream     = "0.3"
+tonic            = { workspace = true }
+prost            = { workspace = true }
+rustls-pemfile   = { workspace = true }
 rcgen            = { workspace = true }
 ring             = { workspace = true }
 base64           = { workspace = true }

@@ -5,15 +5,15 @@ members = [
     "libs/rust-libs/authn-scope-tpm",
     "apps/rust-apps/authn-scope-server",
     "apps/rust-apps/authn-scope-agent",
-    "testapp/authn-scope-evaluator",
+    "testapp/check-svid-rust",
     "testapp/grpc-app-rust",
-    "libs/rust-libs/authn-scope-workload",
-    "apps/rust-apps/workload-test-workload",
-    "apps/rust-apps/profiler",
+    "testapp/workload-test-workload",
+    "testapp/profiler",
 ]
 resolver = "2"
 
 [workspace.dependencies]
+spiffe       = { version = "0.16", features = ["workload-api", "x509-source"] }
 # Async runtime
 tokio        = { version = "1",    features = ["full"] }
 tokio-vsock  = { version = "0.5",  features = [] }
@@ -59,5 +59,4 @@ tss-esapi = "7.7"
 # Workspace-internal crates
 authn-scope-proto = { path = "libs/rust-libs/authn-scope-proto" }
 authn-scope-ca    = { path = "libs/rust-libs/authn-scope-ca" }
-authn-scope-workload = { path = "libs/rust-libs/authn-scope-workload" }
 authn-scope-tpm   = { path = "libs/rust-libs/authn-scope-tpm" }

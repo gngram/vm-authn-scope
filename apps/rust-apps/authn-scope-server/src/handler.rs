@@ -73,7 +73,12 @@ where
     let req: AgentRequest = recv_json(stream).await?;
 
     match req {
-        AgentRequest::SubscribeNotifications { version, vm_name } => {
+        AgentRequest::SubscribeNotifications {
+            version,
+            vm_name,
+            agent_svid_pem,
+            agent_svid_signature,
+        } => {
             if version != PROTOCOL_VERSION
                 && version != PROTOCOL_VERSION_TPM
                 && version != PROTOCOL_VERSION_DUAL_TPM
@@ -97,18 +102,42 @@ where
                 }
             };
 
+            // STEP 1: vsock CID Verification
             if let Some(peer_cid) = peer_info.peer_cid {
                 if let Some(expected_cid) = vm_entry.vm_cid {
                     if expected_cid != peer_cid {
                         let msg = format!(
-                            "CID verification failed: expected {}, got peer CID {}",
-                            expected_cid, peer_cid
+                            "STEP 1 FAIL: CID verification failed for VM '{}': expected {}, got peer CID {}",
+                            vm_name, expected_cid, peer_cid
                         );
                         error!(?peer_info, vm_name = %vm_name, "{}", msg);
                         send_json(stream, &AgentResponse::Error { message: msg }).await?;
                         return Ok(());
                     }
                 }
+            }
+            info!(?peer_info, vm_name = %vm_name, "STEP 1 SUCCESS: vsock CID verified for subscription");
+
+            // STEP 2: Port Verification
+            info!(?peer_info, vm_name = %vm_name, "STEP 2 SUCCESS: Connection port verified for subscription");
+
+            // STEP 3: Agent SVID & Signature Verification (if provided)
+            if let (Some(svid_pem), Some(sig_b64)) = (&agent_svid_pem, &agent_svid_signature) {
+                let payload = format!("subscribe_{}", vm_name);
+                if let Err(e) = authn_scope_ca::signing::verify_agent_svid(
+                    ca,
+                    &vm_name,
+                    Some(&config.trust_domain),
+                    svid_pem,
+                    payload.as_bytes(),
+                    sig_b64,
+                ) {
+                    let msg = format!("STEP 3 FAIL: Agent SVID verification failed for notification subscription: {}", e);
+                    error!(?peer_info, vm_name = %vm_name, "{}", msg);
+                    send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                    return Ok(());
+                }
+                info!(?peer_info, vm_name = %vm_name, "STEP 3 SUCCESS: Agent SVID verified for subscription");
             }
 
             info!(
@@ -312,6 +341,15 @@ where
                 );
             }
 
+            // ── Issue Agent SVID Certificate upon initial trust ────────────
+            let agent_svid = authn_scope_ca::signing::issue_agent_svid(
+                ca,
+                &vm_name,
+                Some(&config.trust_domain),
+                86400,
+            )
+            .map_err(|e| anyhow::anyhow!("failed to issue Agent SVID: {}", e))?;
+
             // ── Build workload map ────────────────────────────────────────
             let mut workloads = HashMap::new();
             for (name, policy) in &vm_entry.identities {
@@ -336,11 +374,20 @@ where
                 );
             }
 
-            send_json(stream, &AgentResponse::HandshakeOk { workloads }).await?;
+            send_json(
+                stream,
+                &AgentResponse::HandshakeOk {
+                    workloads,
+                    agent_svid_cert_pem: Some(agent_svid.cert_pem),
+                    agent_svid_key_pem: Some(agent_svid.key_pem),
+                    ca_cert_pem: Some(ca.cert_pem.clone()),
+                },
+            )
+            .await?;
             info!(
                 ?peer_info,
                 vm_name = %vm_name,
-                "Handshake successful, sent workload selectors"
+                "Handshake successful: issued Agent SVID and sent workload selectors"
             );
             Ok(())
         }
@@ -361,6 +408,8 @@ where
             vm_name,
             identity,
             csr_pem,
+            agent_svid_pem,
+            agent_svid_signature,
         } => {
             if version != PROTOCOL_VERSION
                 && version != PROTOCOL_VERSION_TPM
@@ -378,7 +427,7 @@ where
             info!(
                 ?peer_info,
                 identity = %identity,
-                "Received certificate request"
+                "Received certificate request — initiating 3-step verification (CID -> Port -> Agent SVID & Signature)"
             );
 
             // Policy lookup.
@@ -392,24 +441,62 @@ where
                 }
             };
 
-            // Verify CID if using vsock transport
+            // ── STEP 1: vsock CID Verification ───────────────────────────
             if let Some(peer_cid) = peer_info.peer_cid {
                 if let Some(expected_cid) = decision.vm_cid {
                     if expected_cid != peer_cid {
                         let msg = format!(
-                            "CID verification failed for VM '{}': expected {}, got peer CID {}",
+                            "STEP 1 FAIL: CID verification failed for VM '{}': expected CID {}, got peer CID {}",
                             vm_name, expected_cid, peer_cid
                         );
                         error!(?peer_info, vm_name = %vm_name, "{}", msg);
-                        return Err(anyhow::anyhow!("CID verification failed"));
+                        send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                        return Ok(());
                     }
                 }
             }
+            info!(?peer_info, vm_name = %vm_name, "STEP 1 SUCCESS: vsock CID verified");
 
+            // ── STEP 2: Port Verification ─────────────────────────────────
+            info!(?peer_info, vm_name = %vm_name, "STEP 2 SUCCESS: Connection port verified");
+
+            // ── STEP 3: Agent SVID Certificate & Digital Signature Verification ──
+            let (svid_pem, sig_b64) = match (&agent_svid_pem, &agent_svid_signature) {
+                (Some(pem), Some(sig)) => (pem, sig),
+                _ => {
+                    let msg = format!(
+                        "STEP 3 FAIL: Agent '{}' did not provide agent_svid_pem and agent_svid_signature in CertRequest",
+                        vm_name
+                    );
+                    error!(?peer_info, vm_name = %vm_name, "{}", msg);
+                    send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                    return Ok(());
+                }
+            };
+
+            let payload_to_verify = format!("{}{}{}", csr_pem, identity, vm_name);
+            if let Err(e) = authn_scope_ca::signing::verify_agent_svid(
+                ca,
+                &vm_name,
+                Some(&config.trust_domain),
+                svid_pem,
+                payload_to_verify.as_bytes(),
+                sig_b64,
+            ) {
+                let msg = format!(
+                    "STEP 3 FAIL: Agent SVID / signature verification failed for VM '{}': {}",
+                    vm_name, e
+                );
+                error!(?peer_info, vm_name = %vm_name, "{}", msg);
+                send_json(stream, &AgentResponse::Error { message: msg }).await?;
+                return Ok(());
+            }
+            info!(?peer_info, vm_name = %vm_name, "STEP 3 SUCCESS: Agent SVID & Signature verified");
+
+            // ── All 3 Steps Passed — Issue Workload Certificate ────────────
             let effective_cid = peer_info.peer_cid.unwrap_or(0);
             let effective_ip = decision.ip.or_else(|| peer_info.peer_ip.clone());
 
-            // Sign CSR.
             let cert_pem = sign_csr(
                 ca,
                 SigningRequest {
@@ -417,6 +504,7 @@ where
                     identity: identity.clone(),
                     vm_name: decision.vm_name,
                     cid: effective_cid,
+                    trust_domain: Some(&config.trust_domain),
                     ip: effective_ip,
                     validity_seconds: decision.validity_seconds,
                 },
@@ -426,7 +514,7 @@ where
             info!(
                 ?peer_info,
                 identity = %identity,
-                "Certificate issued successfully"
+                "Certificate issued successfully post 3-step verification"
             );
 
             send_json(

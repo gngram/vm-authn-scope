@@ -149,12 +149,12 @@ in
       # Evaluate service-a's identity using the evaluator test binary
       print("\n\n")
       with subtest("-- capability eval test(rust) --"):
-          machine.succeed("authn-scope-eval-test /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
+          machine.succeed("check-svid-rust /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
           print("\033[94m" + "-- capability eval test(rust) completed successfully --" + "\033[0m")
 
       print("\n\n")
       with subtest("-- capability eval test(go) --"):
-          machine.succeed("authn-scope-eval-test-go /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
+          machine.succeed("check-svid-go /tmp/workload-cert-service-a.pem /etc/authn-scope/ca/ca-cert.pem")
           print("\033[94m" + "-- capability eval test(go) completed successfully --" + "\033[0m")
 
       # Test CLI flags for attestation reset

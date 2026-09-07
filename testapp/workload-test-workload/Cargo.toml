@@ -8,6 +8,7 @@ name = "workload-test-workload"
 path = "src/main.rs"
 
 [dependencies]
-authn-scope-workload = { workspace = true }
-tokio                = { workspace = true }
-anyhow               = { workspace = true }
+spiffe     = { workspace = true }
+tokio      = { workspace = true }
+anyhow     = { workspace = true }
+base64     = { workspace = true }

@@ -27,7 +27,7 @@ cat <<JSON >"$TMP_DIR/host.json"
     "local-vm": {
       "ip": "127.0.0.1",
       "identities": {
-        "service-a": {
+        "grpc-app": {
           "selector": "unix:user:$(id -un),unix:group:$(id -gn)",
           "ttl_minutes": 1
         }

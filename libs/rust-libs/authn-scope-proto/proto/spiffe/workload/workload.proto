@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+
+option go_package = "grpc-app-go/spiffe/workload";
+
+// X509SVIDRequest represents a request for X.509 SVIDs.
+message X509SVIDRequest {
+}
+
+// X509SVIDResponse represents a response containing X.509 SVIDs.
+message X509SVIDResponse {
+    // Required. A list of X509SVID messages.
+    repeated X509SVID svids = 1;
+
+    // Optional. List of ASN.1 DER encoded CRLs.
+    repeated bytes crl = 2;
+
+    // Optional. ASN.1 DER encoded certificate authorities trust bundle.
+    map<string, bytes> federated_bundles = 3;
+}
+
+// X509SVID represents a single X.509 SVID.
+message X509SVID {
+    // Required. The SPIFFE ID of the SVID (e.g. "spiffe://example.org/workload/service-a").
+    string spiffe_id = 1;
+
+    // Required. ASN.1 DER encoded certificate chain. SVID cert first, followed by any intermediates.
+    bytes x509_svid = 2;
+
+    // Required. PKCS#8 DER encoded private key.
+    bytes x509_svid_key = 3;
+
+    // Required. ASN.1 DER encoded trust domain CA bundle.
+    bytes bundle = 4;
+
+    // Optional. List of hint strings.
+    string hint = 5;
+}
+
+// WorkloadAPI defines the standard SPIFFE Workload API interface.
+service SpiffeWorkloadAPI {
+    // Fetch X.509 SVIDs for all workloads the caller is entitled to.
+    rpc FetchX509SVID(X509SVIDRequest) returns (stream X509SVIDResponse);
+}

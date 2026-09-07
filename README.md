@@ -340,8 +340,11 @@ cargo build --release
 ### Run Tests
 
 ```bash
-# End-to-end integration test with QEMU + swtpm vTPM:
+# End-to-end integration test with QEMU + swtpm vTPM (terminates automatically):
 sudo ./scripts/run_integration_test.sh
+
+# Run and open each guest VM in a separate terminal window for live inspection:
+sudo ./scripts/run_integration_test.sh --inspect
 
 # NixOS module VM test:
 run-nixos-module-test

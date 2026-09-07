@@ -5,18 +5,20 @@
   tpm2-tss,
   protobuf,
 }: let
-  cleanSrc = lib.cleanSourceWith {
-    src = ../../.;
-    filter = name: type: let
-      base = baseNameOf name;
+  srcFilter = path: type:
+    let
+      baseName = baseNameOf (toString path);
     in
-      base
-      == "Cargo.lock"
-      || base == "Cargo.toml"
-      || (type == "directory" && (base == "apps" || base == "libs" || base == "testapp"))
-      || lib.hasPrefix (toString ../../apps) name
-      || lib.hasPrefix (toString ../../libs) name
-      || lib.hasPrefix (toString ../../testapp) name;
+      !(lib.hasPrefix "test-result" baseName
+        || lib.hasPrefix "target" baseName
+        || lib.hasPrefix "result" baseName
+        || baseName == ".git"
+        || baseName == ".direnv")
+      && lib.cleanSourceFilter path type;
+
+  cleanSrc = lib.cleanSourceWith {
+    filter = srcFilter;
+    src = ../../.;
   };
 in
   rustPlatform.buildRustPackage {

@@ -1,7 +1,7 @@
 {buildGoModule}:
 buildGoModule {
-  pname = "authn-scope-eval-test-go";
+  pname = "check-svid-go";
   version = "0.1.0";
-  src = ../../testapp/authn-scope-evaluator-go;
+  src = ../../testapp/check-svid-go;
   vendorHash = null;
 }

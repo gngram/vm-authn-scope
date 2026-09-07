@@ -1,11 +1,11 @@
-use authn_scope_evaluator::Evaluator;
+use check_svid_rust::Evaluator;
 use std::env;
 use std::fs;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 || args.len() > 4 {
-        eprintln!("Usage: authn-scope-eval-test <peer_cert.pem> <ca_cert.pem> [expected_identity]");
+        eprintln!("Usage: check-svid-rust <peer_cert.pem> <ca_cert.pem> [expected_identity]");
         std::process::exit(1);
     }
 

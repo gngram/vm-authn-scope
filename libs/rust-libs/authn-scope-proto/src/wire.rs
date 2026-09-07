@@ -30,6 +30,10 @@ pub enum AgentRequest {
     SubscribeNotifications {
         version: u32,
         vm_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_pem: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_signature: Option<String>,
     },
     /// Attestation response sent after receiving an AttestationChallenge.
     AttestationResponse {
@@ -43,6 +47,10 @@ pub enum AgentRequest {
         vm_name: String,
         identity: String, // mapped workload name
         csr_pem: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_pem: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_signature: Option<String>,
     },
 }
 
@@ -110,6 +118,12 @@ pub enum AgentResponse {
     },
     HandshakeOk {
         workloads: HashMap<String, WorkloadConfig>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_cert_pem: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_svid_key_pem: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ca_cert_pem: Option<String>,
     },
     CertOk {
         cert_pem: String,

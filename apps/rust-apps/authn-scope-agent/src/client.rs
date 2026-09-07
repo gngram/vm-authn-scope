@@ -7,12 +7,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use authn_scope_workload::X509Credentials;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    net::{UnixListener, UnixStream},
-    sync::Mutex,
-};
+#[derive(Debug, Clone)]
+pub struct X509Credentials {
+    #[allow(dead_code)]
+    pub spiffe_id: String,
+    pub cert_pem: String,
+    pub key_pem: String,
+    pub ca_cert_pem: String,
+}
+use tokio::{net::UnixListener, sync::Mutex};
 use tracing::info;
 
 use authn_scope_proto::{
@@ -28,12 +31,14 @@ use anyhow::{Context, Result, bail};
 use crate::{config::AgentConfig, csr::generate_csr, transport};
 
 // JSON request/response structures for Workload API
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct WorkloadRequest {
     #[serde(rename = "type")]
     pub req_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum WorkloadResponse {
@@ -54,17 +59,48 @@ struct CachedCredential {
     fetched_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentSvid {
+    pub cert_pem: String,
+    pub key_pem: String,
+}
+
 struct AgentState {
     cache: Mutex<HashMap<String, CachedCredential>>,
     dial_mutex: Mutex<()>,
     vsock_listener: Mutex<Option<tokio_vsock::VsockListener>>,
     workloads: Mutex<HashMap<String, WorkloadConfig>>,
+    agent_svid: Mutex<Option<AgentSvid>>,
+}
+
+fn sign_agent_request(key_pem: &str, payload: &[u8]) -> Result<String> {
+    use ring::signature::EcdsaKeyPair;
+    use ring::rand::SystemRandom;
+
+    let key_der = pem_key_to_der(key_pem);
+    if key_der.is_empty() {
+        bail!("Failed to parse Agent SVID private key DER");
+    }
+
+    let rng = SystemRandom::new();
+    let key_pair = EcdsaKeyPair::from_pkcs8(
+        &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+        &key_der,
+        &rng,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to parse PKCS8 key for Agent SVID: {:?}", e))?;
+
+    let sig = key_pair
+        .sign(&rng, payload)
+        .map_err(|e| anyhow::anyhow!("signing payload with Agent SVID key failed: {:?}", e))?;
+
+    Ok(base64_encode(sig.as_ref()))
 }
 
 /// Run agent: Handshake first, then start workloads UDS listener.
 pub async fn run_agent(config: &AgentConfig) -> Result<()> {
-    // 1. Perform boot-time handshake with Host/Server to retrieve workloads configuration.
-    let workloads = perform_handshake(config).await?;
+    // 1. Perform boot-time handshake with Host/Server to retrieve workloads configuration and Agent SVID.
+    let (workloads, agent_svid) = perform_handshake(config).await?;
 
     // 2. If using vsock, bind the persistent listener to client port (901) to protect it.
     let persistent_listener = if config.transport == "vsock" {
@@ -96,6 +132,7 @@ pub async fn run_agent(config: &AgentConfig) -> Result<()> {
         dial_mutex: Mutex::new(()),
         vsock_listener: Mutex::new(persistent_listener),
         workloads: Mutex::new(workloads),
+        agent_svid: Mutex::new(agent_svid),
     });
 
     // 3. Launch Workload API UDS server concurrently if configured.
@@ -158,9 +195,22 @@ async fn connect_and_listen_notifications(
         .await
         .context("connecting to server notification channel failed")?;
 
+    let (agent_svid_pem, agent_svid_signature) = {
+        let svid_guard = state.agent_svid.lock().await;
+        if let Some(ref svid) = *svid_guard {
+            let payload = format!("subscribe_{}", config.vm_name);
+            let sig = sign_agent_request(&svid.key_pem, payload.as_bytes())?;
+            (Some(svid.cert_pem.clone()), Some(sig))
+        } else {
+            (None, None)
+        }
+    };
+
     let req = AgentRequest::SubscribeNotifications {
         version: PROTOCOL_VERSION,
         vm_name: config.vm_name.clone(),
+        agent_svid_pem,
+        agent_svid_signature,
     };
 
     send_json(&mut stream, &req)
@@ -212,7 +262,9 @@ async fn listen_loop(
     }
 }
 
-async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, WorkloadConfig>> {
+async fn perform_handshake(
+    config: &AgentConfig,
+) -> Result<(HashMap<String, WorkloadConfig>, Option<AgentSvid>)> {
     // Detect TPM if present
     let tpm_info = match authn_scope_tpm::try_detect_tpm() {
         Ok(tcti) => {
@@ -261,7 +313,7 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
         vm_name = %config.vm_name,
         transport = %config.transport,
         has_tpm = tpm_info.is_some(),
-        "Connecting to CA server to perform handshake..."
+        "[Agent Step 1] Connecting to Host CA Server to perform handshake..."
     );
 
     let mut stream = transport::connect_to_server(config)
@@ -348,12 +400,21 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
                 .context("receiving post-attestation response")?;
 
             match final_resp {
-                AgentResponse::HandshakeOk { workloads } => {
+                AgentResponse::HandshakeOk {
+                    workloads,
+                    agent_svid_cert_pem,
+                    agent_svid_key_pem,
+                    ..
+                } => {
                     info!(
                         "Dual attestation verified by server! Received {} workload configurations",
                         workloads.len()
                     );
-                    Ok(workloads)
+                    let svid = match (agent_svid_cert_pem, agent_svid_key_pem) {
+                        (Some(cert_pem), Some(key_pem)) => Some(AgentSvid { cert_pem, key_pem }),
+                        _ => None,
+                    };
+                    Ok((workloads, svid))
                 }
                 AgentResponse::Error { message } => {
                     bail!("Attestation rejected by server: {}", message);
@@ -392,12 +453,21 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
                 .context("receiving post-attestation response")?;
 
             match final_resp {
-                AgentResponse::HandshakeOk { workloads } => {
+                AgentResponse::HandshakeOk {
+                    workloads,
+                    agent_svid_cert_pem,
+                    agent_svid_key_pem,
+                    ..
+                } => {
                     info!(
                         "Attestation verified by server! Received {} workload configurations",
                         workloads.len()
                     );
-                    Ok(workloads)
+                    let svid = match (agent_svid_cert_pem, agent_svid_key_pem) {
+                        (Some(cert_pem), Some(key_pem)) => Some(AgentSvid { cert_pem, key_pem }),
+                        _ => None,
+                    };
+                    Ok((workloads, svid))
                 }
                 AgentResponse::Error { message } => {
                     bail!("Attestation rejected by server: {}", message);
@@ -407,12 +477,21 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
                 }
             }
         }
-        AgentResponse::HandshakeOk { workloads } => {
+        AgentResponse::HandshakeOk {
+            workloads,
+            agent_svid_cert_pem,
+            agent_svid_key_pem,
+            ..
+        } => {
             info!(
                 "Handshake successful, received {} workload configurations",
                 workloads.len()
             );
-            Ok(workloads)
+            let svid = match (agent_svid_cert_pem, agent_svid_key_pem) {
+                (Some(cert_pem), Some(key_pem)) => Some(AgentSvid { cert_pem, key_pem }),
+                _ => None,
+            };
+            Ok((workloads, svid))
         }
         AgentResponse::Error { message } => {
             bail!("Handshake rejected by server: {}", message);
@@ -423,7 +502,227 @@ async fn perform_handshake(config: &AgentConfig) -> Result<HashMap<String, Workl
     }
 }
 
-/// Start UDS server loop.
+use authn_scope_proto::spiffe::workload::{
+    spiffe_workload_api_server::{SpiffeWorkloadApi, SpiffeWorkloadApiServer},
+    X509svid, X509svidRequest, X509svidResponse,
+};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status};
+
+#[derive(Clone, Debug)]
+pub struct UdsConnectInfo {
+    pub uid: u32,
+    pub gid: u32,
+    pub pid: u32,
+}
+
+pub struct SpiffeWorkloadServiceImpl {
+    config: Arc<AgentConfig>,
+    state: Arc<AgentState>,
+}
+
+fn get_proc_info(pid: u32) -> (Option<String>, Option<String>, Option<String>) {
+    if pid == 0 {
+        return (None, None, None);
+    }
+
+    let bin_path = std::fs::read_link(format!("/proc/{}/exe", pid))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+
+    let mut unitpath = None;
+    let mut unitname = None;
+
+    if let Ok(cgroup) = std::fs::read_to_string(format!("/proc/{}/cgroup", pid)) {
+        for line in cgroup.lines() {
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() >= 3 {
+                let path = parts[2];
+                if path.contains(".service") {
+                    unitpath = Some(path.to_string());
+                    if let Some(name) = path.split('/').last() {
+                        unitname = Some(name.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    (bin_path, unitpath, unitname)
+}
+
+#[tonic::async_trait]
+impl SpiffeWorkloadApi for SpiffeWorkloadServiceImpl {
+    type FetchX509SVIDStream = ReceiverStream<Result<X509svidResponse, Status>>;
+
+    async fn fetch_x509svid(
+        &self,
+        request: Request<X509svidRequest>,
+    ) -> Result<Response<Self::FetchX509SVIDStream>, Status> {
+        let peer_info = request.extensions().get::<UdsConnectInfo>().cloned();
+        info!(?peer_info, "[Agent WorkloadAPI] Received FetchX509SVID request on Workload API UDS socket");
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let config = Arc::clone(&self.config);
+        let state = Arc::clone(&self.state);
+
+        tokio::spawn(async move {
+            let mut iter_count = 0u64;
+            loop {
+                iter_count += 1;
+                // Wait for agent handshake to complete and workloads to be populated
+                let identity_name = loop {
+                    let workloads = state.workloads.lock().await;
+                    if !workloads.is_empty() {
+                        let matched = if let Some(ref peer) = peer_info {
+                            let (bin_path, unitpath, unitname) = get_proc_info(peer.pid);
+                            match_workload(
+                                &workloads,
+                                peer.uid,
+                                peer.gid,
+                                bin_path.as_deref(),
+                                unitpath.as_deref(),
+                                unitname.as_deref(),
+                            )
+                        } else {
+                            None
+                        };
+
+                        let selected = matched
+                            .or_else(|| workloads.keys().next().cloned())
+                            .unwrap();
+                        break selected;
+                    }
+                    drop(workloads);
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                };
+
+                info!(identity = %identity_name, ?peer_info, iter = iter_count, "[Agent WorkloadAPI] Processing FetchX509SVID iteration #{}", iter_count);
+
+                match get_or_fetch_credentials(&config, &identity_name, &state).await {
+                    Ok(creds) => {
+                        let cert_der = pem_to_der(&creds.cert_pem);
+                        let key_der = pem_key_to_der(&creds.key_pem);
+                        let ca_der = pem_to_der(&creds.ca_cert_pem);
+
+                        let spiffe_id = if let Ok((_, x509)) = x509_parser::parse_x509_certificate(&cert_der) {
+                            if let Ok(Some(sans)) = x509.subject_alternative_name() {
+                                sans.value.general_names.iter().find_map(|san| {
+                                    if let x509_parser::extensions::GeneralName::URI(uri) = san {
+                                        Some(uri.to_string())
+                                    } else {
+                                        None
+                                    }
+                                }).unwrap_or_else(|| format!("spiffe://example.org/workload/{}", identity_name))
+                            } else {
+                                format!("spiffe://example.org/workload/{}", identity_name)
+                            }
+                        } else {
+                            format!("spiffe://example.org/workload/{}", identity_name)
+                        };
+
+                        let svid = X509svid {
+                            spiffe_id: spiffe_id.clone(),
+                            x509_svid: cert_der,
+                            x509_svid_key: key_der,
+                            bundle: ca_der,
+                            hint: "authn-scope".to_string(),
+                        };
+
+                        let resp = X509svidResponse {
+                            svids: vec![svid],
+                            crl: vec![],
+                            federated_bundles: std::collections::HashMap::new(),
+                        };
+
+                        info!(identity = %identity_name, spiffe_id = %spiffe_id, iter = iter_count, "[Agent WorkloadAPI] Sending X509SVID response over gRPC stream");
+
+                        if tx.send(Ok(resp)).await.is_err() {
+                            tracing::warn!("[Agent WorkloadAPI] Client disconnected from gRPC stream");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "[Agent WorkloadAPI] Failed to get credentials for stream response");
+                        let _ = tx.send(Err(Status::internal(e.to_string()))).await;
+                        break;
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+}
+
+fn pem_to_der(pem_str: &str) -> Vec<u8> {
+    use rustls_pemfile::certs;
+    certs(&mut pem_str.as_bytes())
+        .filter_map(|r| r.ok())
+        .next()
+        .map(|c| c.to_vec())
+        .unwrap_or_default()
+}
+
+fn pem_key_to_der(pem_str: &str) -> Vec<u8> {
+    use rustls_pemfile::private_key;
+    private_key(&mut pem_str.as_bytes())
+        .ok()
+        .flatten()
+        .map(|k| k.secret_der().to_vec())
+        .unwrap_or_default()
+}
+
+struct UdsStream {
+    stream: tokio::net::UnixStream,
+    connect_info: UdsConnectInfo,
+}
+
+impl tokio::io::AsyncRead for UdsStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for UdsStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
+impl tonic::transport::server::Connected for UdsStream {
+    type ConnectInfo = UdsConnectInfo;
+
+    fn connect_info(&self) -> Self::ConnectInfo {
+        self.connect_info.clone()
+    }
+}
+
+/// Start standard SPIFFE Workload API UDS server loop.
 async fn run_workload_api(
     config: Arc<AgentConfig>,
     state: Arc<AgentState>,
@@ -437,135 +736,47 @@ async fn run_workload_api(
 
     let listener = UnixListener::bind(&socket_path)?;
 
-    // Set 0666 permissions so any workload can connect
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o666))?;
 
     info!(
-        "Workload API listening on Unix Domain Socket at {}",
+        "Standard SPIFFE Workload API gRPC server listening on UDS at {}",
         socket_path
     );
 
-    loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let config = Arc::clone(&config);
-                let state = Arc::clone(&state);
-                tokio::spawn(async move {
-                    if let Err(e) = handle_workload_conn(stream, &config, &state).await {
-                        tracing::error!("Error handling workload connection: {:?}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                tracing::error!("Failed to accept workload connection: {:?}", e);
-            }
-        }
-    }
-}
-
-/// Process a single workload client connection.
-async fn handle_workload_conn(
-    stream: UnixStream,
-    config: &AgentConfig,
-    state: &AgentState,
-) -> Result<()> {
-    let cred = stream.peer_cred()?;
-    let uid = cred.uid();
-    let gid = cred.gid();
-    let pid = cred.pid().unwrap_or(0) as u32;
-
-    let uid_gid = format!("{}:{}", uid, gid);
-
-    // 1. Discover bin_path
-    let proc_bin_path = std::fs::read_link(format!("/proc/{}/exe", pid))
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned());
-
-    // 2. Discover systemd unitpath / unitname
-    let mut proc_unitpath = None;
-    let mut proc_unitname = None;
-    if let Ok(content) = std::fs::read_to_string(format!("/proc/{}/cgroup", pid)) {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3 {
-                let path = parts[2];
-                if path.contains(".service") {
-                    proc_unitpath = Some(path.to_string());
-                    if let Some(name) = path.split('/').next_back() {
-                        proc_unitname = Some(name.to_string());
-                    }
-                    break;
+    let incoming = async_stream::stream! {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _addr)) => {
+                    let cred_info = if let Ok(cred) = stream.peer_cred() {
+                        UdsConnectInfo {
+                            uid: cred.uid(),
+                            gid: cred.gid(),
+                            pid: cred.pid().unwrap_or(0) as u32,
+                        }
+                    } else {
+                        UdsConnectInfo { uid: 0, gid: 0, pid: 0 }
+                    };
+                    yield Ok::<_, std::io::Error>(UdsStream {
+                        stream,
+                        connect_info: cred_info,
+                    });
                 }
+                Err(e) => yield Err(e),
             }
         }
-    }
-
-    info!(
-        uid_gid = %uid_gid,
-        pid,
-        bin_path = ?proc_bin_path,
-        unitpath = ?proc_unitpath,
-        unitname = ?proc_unitname,
-        "Accepted workload connection"
-    );
-
-    let workloads = state.workloads.lock().await;
-    let identity_name = match match_workload(
-        &workloads,
-        uid,
-        gid,
-        proc_bin_path.as_deref(),
-        proc_unitpath.as_deref(),
-        proc_unitname.as_deref(),
-    ) {
-        Some(name) => name,
-        None => {
-            let err_msg = format!(
-                "Attestation failed: no workload selector matches UID '{}', GID '{}', bin_path '{:?}', systemd unit name '{:?}'",
-                uid, gid, proc_bin_path, proc_unitname
-            );
-            tracing::warn!("{}", err_msg);
-            let mut stream = stream;
-            let resp = WorkloadResponse::Error { message: err_msg };
-            let resp_json = serde_json::to_string(&resp)? + "\n";
-            stream.write_all(resp_json.as_bytes()).await?;
-            return Ok(());
-        }
     };
 
-    info!(workload = %identity_name, "Discovered workload mapping");
+    let service = SpiffeWorkloadServiceImpl { config, state };
 
-    let mut reader = tokio::io::BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
-    if line.is_empty() {
-        return Ok(());
-    }
-
-    let req: WorkloadRequest = serde_json::from_str(&line)?;
-    if req.req_type != "fetch" {
-        let err_msg = format!("Unsupported request type: {}", req.req_type);
-        let resp = WorkloadResponse::Error { message: err_msg };
-        let mut writer = reader.into_inner();
-        let resp_json = serde_json::to_string(&resp)? + "\n";
-        writer.write_all(resp_json.as_bytes()).await?;
-        return Ok(());
-    }
-
-    let creds = get_or_fetch_credentials(config, &identity_name, state).await?;
-
-    let resp = WorkloadResponse::Success {
-        cert_pem: creds.cert_pem,
-        key_pem: creds.key_pem,
-        ca_cert_pem: creds.ca_cert_pem,
-    };
-    let mut writer = reader.into_inner();
-    let resp_json = serde_json::to_string(&resp)? + "\n";
-    writer.write_all(resp_json.as_bytes()).await?;
+    tonic::transport::Server::builder()
+        .add_service(SpiffeWorkloadApiServer::new(service))
+        .serve_with_incoming(incoming)
+        .await?;
 
     Ok(())
 }
+
 
 fn match_workload(
     workloads: &HashMap<String, WorkloadConfig>,
@@ -668,13 +879,20 @@ async fn get_or_fetch_credentials(
     if let Some(cached) = cache.get(identity_name) {
         let ttl_secs = get_cert_validity_seconds(&cached.cert_pem).unwrap_or(600);
         let rotation_threshold = Duration::from_secs(ttl_secs / 2);
-        if cached.fetched_at.elapsed() < rotation_threshold {
+        let elapsed = cached.fetched_at.elapsed();
+        if elapsed < rotation_threshold {
+            info!(identity = %identity_name, elapsed_secs = elapsed.as_secs(), threshold_secs = rotation_threshold.as_secs(), "[Agent Cache] Cache HIT for identity (credentials valid)");
+            let spiffe_id = format!("spiffe://example.org/workload/{}", identity_name);
             return Ok(X509Credentials {
+                spiffe_id,
                 cert_pem: cached.cert_pem.clone(),
                 key_pem: cached.key_pem.clone(),
                 ca_cert_pem: cached.ca_cert_pem.clone(),
             });
         }
+        info!(identity = %identity_name, elapsed_secs = elapsed.as_secs(), threshold_secs = rotation_threshold.as_secs(), "[Agent Cache] Cache EXPIRED/THRESHOLD reached for identity — requesting new certificate");
+    } else {
+        info!(identity = %identity_name, "[Agent Cache] Cache MISS for identity — requesting new certificate on demand");
     }
 
     let creds = request_cert_on_demand(config, identity_name, state).await?;
@@ -697,7 +915,7 @@ async fn request_cert_on_demand(
     identity_name: &str,
     state: &AgentState,
 ) -> Result<X509Credentials> {
-    info!(identity = %identity_name, "Requesting certificate from CA server on demand");
+    info!(identity = %identity_name, "[Agent CSR] Requesting certificate from CA server on demand");
 
     let generated = generate_csr(identity_name)
         .with_context(|| format!("CSR generation for identity '{}'", identity_name))?;
@@ -713,11 +931,24 @@ async fn request_cert_on_demand(
         .await
         .context("connecting on demand failed")?;
 
+    let (agent_svid_pem, agent_svid_signature) = {
+        let svid_guard = state.agent_svid.lock().await;
+        if let Some(ref svid) = *svid_guard {
+            let payload = format!("{}{}{}", generated.csr_pem, identity_name, config.vm_name);
+            let sig = sign_agent_request(&svid.key_pem, payload.as_bytes())?;
+            (Some(svid.cert_pem.clone()), Some(sig))
+        } else {
+            (None, None)
+        }
+    };
+
     let req = AgentRequest::CertRequest {
         version: PROTOCOL_VERSION,
         vm_name: config.vm_name.clone(),
         identity: identity_name.to_string(),
         csr_pem: generated.csr_pem,
+        agent_svid_pem,
+        agent_svid_signature,
     };
     send_json(&mut stream, &req)
         .await
@@ -755,6 +986,7 @@ async fn request_cert_on_demand(
             cert_pem,
             ca_cert_pem,
         } => Ok(X509Credentials {
+            spiffe_id: format!("spiffe://example.org/workload/{}", identity_name),
             cert_pem,
             key_pem: generated.key_pem,
             ca_cert_pem,

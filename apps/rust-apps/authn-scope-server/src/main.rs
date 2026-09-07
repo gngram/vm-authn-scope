@@ -97,13 +97,12 @@ async fn main() {
         }
     };
 
-    // Require root if using vsock (vsock bind requires privilege).
+    // Warn if running as non-root with vsock transport
     #[cfg(unix)]
     if cfg.transport == "vsock" && unsafe { libc_getuid() } != 0 {
-        error!(
-            "authn-scope-server with vsock transport must run as root (vsock bind requires privilege)"
+        tracing::warn!(
+            "Running authn-scope-server as non-root user (uid != 0). Vsock bind may fail if /dev/vhost-vsock lacks permissions."
         );
-        process::exit(1);
     }
 
     // Load attestation state (TOFU)

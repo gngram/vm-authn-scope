@@ -1,7 +1,11 @@
 [package]
-name    = "authn-scope-evaluator"
+name    = "check-svid-rust"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "check-svid-rust"
+path = "src/bin/check-svid-rust.rs"
 
 [dependencies]
 authn-scope-proto = { workspace = true }

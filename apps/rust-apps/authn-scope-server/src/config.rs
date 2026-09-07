@@ -11,6 +11,9 @@ use authn_scope_proto::wire::SelectorConfig;
 /// Top-level host configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
+    /// SPIFFE Trust Domain name (e.g. "example.org" or "authn-scope.internal").
+    #[serde(default = "default_trust_domain")]
+    pub trust_domain: String,
     /// Path to the CA certificate PEM file.
     pub ca_cert_path: PathBuf,
     /// Path to the CA private key PEM file.
@@ -32,6 +35,10 @@ pub struct HostConfig {
     /// Expected notification peer port of the client agent (vsock only, default: 902).
     #[serde(default = "default_notification_port")]
     pub notification_port: u32,
+}
+
+fn default_trust_domain() -> String {
+    "example.org".to_string()
 }
 
 fn default_transport() -> String {
@@ -152,9 +159,9 @@ impl HostConfig {
         let data = std::fs::read_to_string(path)?;
         let cfg: Self = serde_json::from_str(&data)?;
 
-        if cfg.server_port >= 1000 {
+        if cfg.server_port == 0 || cfg.server_port > 65535 {
             anyhow::bail!(
-                "server_port must be less than 1000, got {}",
+                "server_port must be between 1 and 65535, got {}",
                 cfg.server_port
             );
         }

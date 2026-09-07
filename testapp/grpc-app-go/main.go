@@ -2,17 +2,18 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"grpc-app-go/echo"
 
-	"authn-scope-workload"
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -32,8 +33,8 @@ func (s *echoServer) Echo(ctx context.Context, req *echo.EchoRequest) (*echo.Ech
 			peerCN = tlsInfo.State.PeerCertificates[0].Subject.CommonName
 		}
 	}
-	fmt.Printf("[Go App] Extracted peer name from certificate: '%s'\n", peerCN)
-	fmt.Printf("[Go App] Received gRPC message from '%s': %s\n", peerCN, req.Message)
+	logMsg("[Go App] Extracted peer name from certificate: '%s'", peerCN)
+	logMsg("[Go App] Received gRPC message from '%s': %s", peerCN, req.Message)
 
 	return &echo.EchoResponse{
 		Message:      fmt.Sprintf("gRPC Echo Response from %s", s.serverCN),
@@ -42,6 +43,9 @@ func (s *echoServer) Echo(ctx context.Context, req *echo.EchoRequest) (*echo.Ech
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetOutput(os.Stdout)
+
 	args := os.Args[1:]
 	mode := "server"
 	if len(args) > 0 {
@@ -56,46 +60,65 @@ func main() {
 		socketPath = args[2]
 	}
 
-	fmt.Printf("[Go App] Starting gRPC test app in mode '%s' at %s using Production TLS Callbacks\n", mode, addr)
+	logMsg("[Go App] === STEP 1: Starting Go gRPC test app (mode: '%s', target addr: '%s', socket: '%s') ===", mode, addr, socketPath)
 
-	client := workload.NewWorkloadClient(socketPath)
+	// Initialize official SPIFFE X509Source directly targeting the agent socket
+	formattedAddr := socketPath
+	if !strings.HasPrefix(socketPath, "unix:") {
+		formattedAddr = "unix://" + socketPath
+	}
+	os.Setenv("SPIFFE_ENDPOINT_SOCKET", formattedAddr)
+	clientOptions := workloadapi.WithClientOptions(workloadapi.WithAddr(formattedAddr))
 
-	initialCreds, err := fetchCredentialsRetry(client)
+	logMsg("[Go App] === STEP 2: Connecting to SPIFFE Workload API UDS socket at '%s' ===", formattedAddr)
+	var source *workloadapi.X509Source
+	var err error
+	for i := 0; i < 60; i++ {
+		source, err = workloadapi.NewX509Source(context.Background(), clientOptions)
+		if err == nil {
+			logMsg("[Go App] [STEP 2 SUCCESS] Established connection to SPIFFE Workload API UDS socket on attempt %d", i+1)
+			break
+		}
+		logMsg("[Go App] [STEP 2 ATTEMPT %d/60] Connecting to UDS at '%s' failed: %v", i+1, formattedAddr, err)
+		time.Sleep(1 * time.Second)
+	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching initial credentials: %v\n", err)
+		logMsg("[Go App] [STEP 2 FATAL] Failed to create official SPIFFE X509Source after 60 attempts: %v", err)
+		os.Exit(1)
+	}
+	defer source.Close()
+
+	logMsg("[Go App] === STEP 3: Fetching initial X509SVID via SPIFFE Workload API ===")
+	svid, err := source.GetX509SVID()
+	if err != nil {
+		logMsg("[Go App] [STEP 3 FATAL] Failed to get X509SVID from SPIFFE Workload API: %v", err)
 		os.Exit(1)
 	}
 
-	// Start production background rotation loop (updates current credentials in memory automatically)
-	client.StartRotationLoop(5 * time.Second)
+	cert := svid.Certificates[0]
+	cn := cert.Subject.CommonName
+	notBefore := cert.NotBefore.Unix()
+	notAfter := cert.NotAfter.Unix()
 
-	cn, notBefore, notAfter, err := parseCertInfo(initialCreds.CertPEM)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing certificate info: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("[Go App] Initial credentials loaded into background rotation cache. CN='%s', NotBefore=%d, NotAfter=%d\n", cn, notBefore, notAfter)
+	logMsg("[Go App] [STEP 3 SUCCESS] Initial credentials loaded! SPIFFE ID='%s', CN='%s', NotBefore=%d, NotAfter=%d",
+		svid.ID.String(), cn, notBefore, notAfter)
 
 	if mode == "server" {
-		if err := runServer(addr, client, initialCreds, notBefore); err != nil {
-			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		if err := runServer(addr, source, notBefore); err != nil {
+			logMsg("[Go App] [SERVER FATAL] Server error: %v", err)
 			os.Exit(1)
 		}
 	} else {
-		if err := runClient(addr, client, initialCreds, notBefore); err != nil {
-			fmt.Fprintf(os.Stderr, "Client error: %v\n", err)
+		if err := runClient(addr, source, notBefore); err != nil {
+			logMsg("[Go App] [CLIENT FATAL] Client error: %v", err)
 			os.Exit(1)
 		}
 	}
 }
 
-func runServer(addr string, client *workload.WorkloadClient, initialCreds *workload.X509Credentials, initialNotBefore int64) error {
-	// Production Server TLS Config with dynamic GetCertificate callback
-	tlsConfig, err := createDynamicTLSServerConfig(client, initialCreds)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic server TLS config: %w", err)
-	}
+func runServer(addr string, source *workloadapi.X509Source, initialNotBefore int64) error {
+	logMsg("[Go Server] === STEP 4: Configuring gRPC mTLS server with SPIFFE TLS Config (AuthorizeAny) ===")
+	tlsConfig := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeAny())
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -104,201 +127,173 @@ func runServer(addr string, client *workload.WorkloadClient, initialCreds *workl
 	defer lis.Close()
 
 	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-	srv := &echoServer{serverCN: "service-b"}
+	srv := &echoServer{serverCN: "grpc-app"}
 	echo.RegisterEchoServiceServer(grpcServer, srv)
 
-	fmt.Printf("[Go App] gRPC Server (google.golang.org/grpc with Production TLS Callbacks) listening at %s\n", addr)
+	logMsg("[Go Server] [STEP 4 SUCCESS] gRPC Server listening at %s", addr)
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- grpcServer.Serve(lis)
 	}()
 
-	// Wait 32 seconds while background rotation loop handles updates automatically
-	fmt.Println("[Go App] Waiting 32 seconds for automatic certificate rotation threshold...")
+	logMsg("[Go Server] === STEP 5: Waiting 32 seconds for automatic SPIFFE SVID rotation in background... ===")
 	time.Sleep(32 * time.Second)
 
-	// Fetch separately from Workload API ONLY for test log assertion
-	assertionCreds, err := client.FetchCredentials()
-	if err != nil {
-		return fmt.Errorf("separate assertion fetch failed: %w", err)
+	logMsg("[Go Server] === STEP 6: Fetching rotated X509SVID from SPIFFE SDK... ===")
+	var rotatedSVID *x509svid.SVID
+	var cn2 string
+	var notBefore2 int64
+	var notAfter2 int64
+
+	for attempt := 0; attempt < 15; attempt++ {
+		rotatedSVID, err = source.GetX509SVID()
+		if err == nil && len(rotatedSVID.Certificates) > 0 {
+			cert2 := rotatedSVID.Certificates[0]
+			cn2 = cert2.Subject.CommonName
+			notBefore2 = cert2.NotBefore.Unix()
+			notAfter2 = cert2.NotAfter.Unix()
+			if notBefore2 > initialNotBefore {
+				break
+			}
+		}
+		time.Sleep(1 * time.Second)
 	}
 
-	cn2, notBefore2, notAfter2, err := parseCertInfo(assertionCreds.CertPEM)
-	if err != nil {
-		return fmt.Errorf("failed to parse assertion certificate: %w", err)
+	if rotatedSVID == nil || err != nil {
+		return fmt.Errorf("failed to retrieve rotated SVID from official SPIFFE SDK: %w", err)
 	}
 
-	fmt.Printf("[Go App] Separate assertion fetch complete. CN='%s', NotBefore=%d, NotAfter=%d\n", cn2, notBefore2, notAfter2)
+	logMsg("[Go Server] [STEP 6 SUCCESS] Rotated SVID retrieved! CN='%s', NotBefore=%d, NotAfter=%d", cn2, notBefore2, notAfter2)
 
 	if notBefore2 <= initialNotBefore {
 		return fmt.Errorf("certificate timestamp verification FAILED! Initial NotBefore=%d, Rotated NotBefore=%d", initialNotBefore, notBefore2)
 	}
-	fmt.Printf("[Go App] Certificate timestamp verification SUCCESS! Initial NotBefore: %d, Rotated NotBefore: %d (Advanced by %ds)\n",
+	logMsg("[Go Server] [STEP 6 VERIFIED] Timestamp check SUCCESS! Initial NotBefore: %d, Rotated NotBefore: %d (Advanced by %ds)",
 		initialNotBefore, notBefore2, notBefore2-initialNotBefore)
 
-	time.Sleep(10 * time.Second)
+	logMsg("[Go Server] === STEP 7: Waiting 15 seconds for incoming gRPC client calls before graceful shutdown ===")
+	time.Sleep(15 * time.Second)
 	grpcServer.GracefulStop()
 
-	fmt.Println("[Go App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!")
+	logMsg("[Go Server] === STEP 8: ALL gRPC mTLS & Certificate Rotation checks PASSED successfully! ===")
 	return nil
 }
 
-func runClient(addr string, client *workload.WorkloadClient, initialCreds *workload.X509Credentials, initialNotBefore int64) error {
-	// Production Client TLS Config with dynamic GetClientCertificate callback
-	tlsConfig, err := createDynamicTLSClientConfig(client, initialCreds)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client TLS config: %w", err)
-	}
+func runClient(addr string, source *workloadapi.X509Source, initialNotBefore int64) error {
+	logMsg("[Go Client] === STEP 4: Configuring gRPC mTLS client with SPIFFE TLS Config (ServerName='grpc-app') ===")
+	tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+	tlsConfig.ServerName = "grpc-app"
 
-	// Pre-Rotation Connection 1 using Production Dynamic Callback
+	logMsg("[Go Client] === STEP 5: Pre-Rotation Connection 1 — Connecting to gRPC server at %s via mTLS ===", addr)
 	var conn1 *grpc.ClientConn
+	var lastErr error
 	for i := 0; i < 60; i++ {
-		c, err := grpc.Dial(addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock())
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		c, err := grpc.DialContext(dialCtx, addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock())
+		dialCancel()
 		if err == nil {
 			conn1 = c
+			logMsg("[Go Client] [STEP 5 SUCCESS] Connected to gRPC server at %s on attempt %d", addr, i+1)
 			break
 		}
+		lastErr = err
+		logMsg("[Go Client] [STEP 5 ATTEMPT %d/60] Pre-rotation connection attempt to %s failed: %v", i+1, addr, err)
 		time.Sleep(500 * time.Millisecond)
 	}
 	if conn1 == nil {
-		return fmt.Errorf("failed to connect to gRPC server at %s via mTLS", addr)
+		return fmt.Errorf("failed to connect to gRPC server at %s via mTLS after 60 attempts: %v", addr, lastErr)
 	}
 
-	fmt.Printf("[Go App] Connected to gRPC server at %s via Production TLS Callbacks (Pre-Rotation Connection 1)\n", addr)
 	echoClient1 := echo.NewEchoServiceClient(conn1)
 
+	logMsg("[Go Client] === STEP 6: Sending Pre-Rotation Echo RPC request to server ===")
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel1()
 
-	resp1, err := echoClient1.Echo(ctx1, &echo.EchoRequest{Message: "gRPC Hello via Production TLS Callback (Pre-Rotation)"})
+	resp1, err := echoClient1.Echo(ctx1, &echo.EchoRequest{Message: "gRPC Hello via Official SPIFFE TLS Config (Pre-Rotation)"})
 	if err != nil {
 		conn1.Close()
 		return fmt.Errorf("gRPC Echo call 1 failed: %w", err)
 	}
-	fmt.Printf("[Go App] Extracted peer name from certificate: '%s'\n", resp1.PeerIdentity)
-	fmt.Printf("[Go App] Received gRPC response: %s\n", resp1.Message)
+	logMsg("[Go Client] [STEP 6 SUCCESS] Extracted peer identity from server cert: '%s'", resp1.PeerIdentity)
+	logMsg("[Go Client] [STEP 6 SUCCESS] Received server response: '%s'", resp1.Message)
 	conn1.Close()
 
-	// Wait 32 seconds while background rotation loop handles certificate rotation in memory
-	fmt.Println("[Go App] Waiting 32 seconds for automatic certificate rotation threshold...")
+	logMsg("[Go Client] === STEP 7: Waiting 32 seconds for background SPIFFE SVID automatic rotation... ===")
 	time.Sleep(32 * time.Second)
 
-	// Separate fetch from Workload API ONLY for test assertion
-	assertionCreds, err := client.FetchCredentials()
-	if err != nil {
-		return fmt.Errorf("separate assertion fetch failed: %w", err)
+	logMsg("[Go Client] === STEP 8: Fetching rotated X509SVID from SPIFFE SDK... ===")
+	var rotatedSVID *x509svid.SVID
+	var cn2 string
+	var notBefore2 int64
+	var notAfter2 int64
+
+	for attempt := 0; attempt < 15; attempt++ {
+		rotatedSVID, err = source.GetX509SVID()
+		if err == nil && len(rotatedSVID.Certificates) > 0 {
+			cert2 := rotatedSVID.Certificates[0]
+			cn2 = cert2.Subject.CommonName
+			notBefore2 = cert2.NotBefore.Unix()
+			notAfter2 = cert2.NotAfter.Unix()
+			if notBefore2 > initialNotBefore {
+				break
+			}
+		}
+		time.Sleep(1 * time.Second)
 	}
 
-	cn2, notBefore2, notAfter2, err := parseCertInfo(assertionCreds.CertPEM)
-	if err != nil {
-		return fmt.Errorf("failed to parse assertion certificate: %w", err)
+	if rotatedSVID == nil || err != nil {
+		return fmt.Errorf("failed to retrieve rotated SVID from official SPIFFE SDK: %w", err)
 	}
 
-	fmt.Printf("[Go App] Separate assertion fetch complete. CN='%s', NotBefore=%d, NotAfter=%d\n", cn2, notBefore2, notAfter2)
+	logMsg("[Go Client] [STEP 8 SUCCESS] Rotated SVID retrieved! CN='%s', NotBefore=%d, NotAfter=%d", cn2, notBefore2, notAfter2)
 
 	if notBefore2 <= initialNotBefore {
 		return fmt.Errorf("certificate timestamp verification FAILED! Initial NotBefore=%d, Rotated NotBefore=%d", initialNotBefore, notBefore2)
 	}
-	fmt.Printf("[Go App] Certificate timestamp verification SUCCESS! Initial NotBefore: %d, Rotated NotBefore: %d (Advanced by %ds)\n",
+	logMsg("[Go Client] [STEP 8 VERIFIED] Certificate timestamp verification SUCCESS! Initial NotBefore: %d, Rotated NotBefore: %d (Advanced by %ds)",
 		initialNotBefore, notBefore2, notBefore2-initialNotBefore)
 
-	// Post-Rotation Connection 2 using THE EXACT SAME tlsConfig (GetClientCertificate automatically returns rotated cert from memory!)
-	conn2, err := grpc.Dial(addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock())
-	if err != nil {
-		return fmt.Errorf("failed to connect to gRPC server post-rotation via Production TLS Callbacks: %w", err)
+	logMsg("[Go Client] === STEP 9: Post-Rotation Connection 2 — Re-connecting to gRPC server at %s via SAME tlsConfig ===", addr)
+	var conn2 *grpc.ClientConn
+	for i := 0; i < 20; i++ {
+		dialCtx2, dialCancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+		c, err := grpc.DialContext(dialCtx2, addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock())
+		dialCancel2()
+		if err == nil {
+			conn2 = c
+			logMsg("[Go Client] [STEP 9 SUCCESS] Post-rotation connection to %s established on attempt %d", addr, i+1)
+			break
+		}
+		lastErr = err
+		logMsg("[Go Client] [STEP 9 ATTEMPT %d/20] Post-rotation connection attempt to %s failed: %v", i+1, addr, err)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if conn2 == nil {
+		return fmt.Errorf("failed to connect to gRPC server post-rotation via Official SPIFFE TLS Config: %v", lastErr)
 	}
 	defer conn2.Close()
 
-	fmt.Printf("[Go App] Connected to gRPC server at %s via Production TLS Callbacks (Post-Rotation Connection 2)\n", addr)
+	logMsg("[Go Client] === STEP 10: Sending Post-Rotation Echo RPC request to server ===")
 	echoClient2 := echo.NewEchoServiceClient(conn2)
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel2()
 
-	resp2, err := echoClient2.Echo(ctx2, &echo.EchoRequest{Message: "gRPC Hello via Production TLS Callback (Post-Rotation)"})
+	resp2, err := echoClient2.Echo(ctx2, &echo.EchoRequest{Message: "gRPC Hello via Official SPIFFE TLS Config (Post-Rotation)"})
 	if err != nil {
 		return fmt.Errorf("post-rotation gRPC Echo call failed: %w", err)
 	}
-	fmt.Printf("[Go App] Extracted post-rotation peer name: '%s'\n", resp2.PeerIdentity)
-	fmt.Printf("[Go App] Received post-rotation gRPC response: %s\n", resp2.Message)
+	logMsg("[Go Client] [STEP 10 SUCCESS] Extracted post-rotation peer name: '%s'", resp2.PeerIdentity)
+	logMsg("[Go Client] [STEP 10 SUCCESS] Received post-rotation response: '%s'", resp2.Message)
 
-	fmt.Println("[Go App] All gRPC mTLS & Certificate Rotation checks PASSED successfully!")
+	logMsg("[Go Client] === STEP 11: ALL gRPC mTLS & CERTIFICATE ROTATION CHECKS PASSED SUCCESSFULLY! ===")
 	return nil
 }
 
-func createDynamicTLSServerConfig(client *workload.WorkloadClient, initialCreds *workload.X509Credentials) (*tls.Config, error) {
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM([]byte(initialCreds.CaCertPEM)) {
-		return nil, fmt.Errorf("failed to append CA certificate to pool")
-	}
-
-	return &tls.Config{
-		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			creds := client.CurrentCredentials()
-			if creds == nil {
-				creds = initialCreds
-			}
-			cert, err := tls.X509KeyPair([]byte(creds.CertPEM), []byte(creds.KeyPEM))
-			if err != nil {
-				return nil, fmt.Errorf("GetCertificate error: %w", err)
-			}
-			return &cert, nil
-		},
-		ClientCAs:  caCertPool,
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		MinVersion: tls.VersionTLS12,
-	}, nil
-}
-
-func createDynamicTLSClientConfig(client *workload.WorkloadClient, initialCreds *workload.X509Credentials) (*tls.Config, error) {
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM([]byte(initialCreds.CaCertPEM)) {
-		return nil, fmt.Errorf("failed to append CA certificate to pool")
-	}
-
-	return &tls.Config{
-		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			creds := client.CurrentCredentials()
-			if creds == nil {
-				creds = initialCreds
-			}
-			cert, err := tls.X509KeyPair([]byte(creds.CertPEM), []byte(creds.KeyPEM))
-			if err != nil {
-				return nil, fmt.Errorf("GetClientCertificate error: %w", err)
-			}
-			return &cert, nil
-		},
-		RootCAs:            caCertPool,
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
-	}, nil
-}
-
-func parseCertInfo(certPEM string) (string, int64, int64, error) {
-	block, _ := pem.Decode([]byte(certPEM))
-	if block == nil {
-		return "", 0, 0, fmt.Errorf("failed to decode PEM block")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	cn := cert.Subject.CommonName
-	if cn == "" {
-		cn = "unknown"
-	}
-	return cn, cert.NotBefore.Unix(), cert.NotAfter.Unix(), nil
-}
-
-func fetchCredentialsRetry(client *workload.WorkloadClient) (*workload.X509Credentials, error) {
-	var err error
-	for i := 0; i < 40; i++ {
-		creds, e := client.FetchCredentials()
-		if e == nil {
-			return creds, nil
-		}
-		err = e
-		time.Sleep(500 * time.Millisecond)
-	}
-	return nil, fmt.Errorf("Workload API fetch credentials failed after retries: %w", err)
+func logMsg(format string, a ...interface{}) {
+	msg := fmt.Sprintf(format, a...)
+	log.Println(msg)
+	os.Stdout.Sync()
+	os.Stderr.Sync()
 }

@@ -9,46 +9,86 @@
   authScope = pkgs.callPackage ../pkgs/authn-scope-rust.nix {};
   authScopeGo = pkgs.callPackage ../pkgs/authn-scope-go.nix {};
 
-  evalTestScript = pkgs.writeShellScript "run-eval-test" ''
-    set -e
-    trap 'echo FAILURE > /workspace/test-result/vm1-result-summary' ERR
+  checkSvidRustScript = pkgs.writeShellScript "run-check-svid-rust" ''
+    set -x
+    exec > /workspace/test-result/vm1-check-svid-rust.log 2>&1
+    trap 'echo "FAILED at line $LINENO: command ($BASH_COMMAND) exited with status $?" ; echo FAILURE > /workspace/test-result/vm1-check-svid-rust-summary' ERR
 
     mkdir -p /workspace/test-result
 
-    echo "==> [VM-1] Waiting for Workload API socket..."
+    echo "==> [VM-1 check-svid-rust] Waiting for Workload API socket..."
     for i in $(seq 1 60); do
       [ -S /run/authn-scope/workload.sock ] && break
       sleep 1
     done
     [ -S /run/authn-scope/workload.sock ] || { echo "[VM-1] Workload socket never appeared"; exit 1; }
 
-    echo "==> [VM-1] Fetching credentials via Workload API (as service-a)..."
-    ${pkgs.util-linux}/bin/runuser -u service-a -- env USER=service-a \
-      ${authScope}/bin/workload-test-workload /run/authn-scope/workload.sock
+    echo "==> [VM-1 check-svid-rust] Fetching credentials via Workload API (systemd selector: check-svid-rust.service)..."
+    env USER=check-svid-rust /workspace/target/release/workload-test-workload /run/authn-scope/workload.sock
 
-    cp /tmp/workload-cert-service-a.pem /workspace/test-result/vm1-service-a-cert.pem
-    cp /tmp/workload-ca-service-a.pem   /workspace/test-result/ca-cert.pem
+    cp /tmp/workload-cert-check-svid-rust.pem /workspace/test-result/vm1-check-svid-rust-cert.pem
+    cp /tmp/workload-ca-check-svid-rust.pem   /workspace/test-result/ca-cert.pem
 
-    echo "==> [VM-1] Evaluating certificate (Rust)..."
-    ${authScope}/bin/authn-scope-eval-test \
-      /workspace/test-result/vm1-service-a-cert.pem \
+    echo "==> [VM-1 check-svid-rust] Evaluating certificate (check-svid-rust)..."
+    /workspace/target/release/check-svid-rust \
+      /workspace/test-result/vm1-check-svid-rust-cert.pem \
       /workspace/test-result/ca-cert.pem \
-      service-a
+      check-svid-rust
 
-    echo "==> [VM-1] Evaluating certificate (Go)..."
-    ${authScopeGo}/bin/authn-scope-eval-test-go \
-      /workspace/test-result/vm1-service-a-cert.pem \
+    echo SUCCESS > /workspace/test-result/vm1-check-svid-rust-summary
+    echo "==> [VM-1 check-svid-rust] Passed!"
+  '';
+
+  checkSvidGoScript = pkgs.writeShellScript "run-check-svid-go" ''
+    set -x
+    exec > /workspace/test-result/vm1-check-svid-go.log 2>&1
+    trap 'echo "FAILED at line $LINENO: command ($BASH_COMMAND) exited with status $?" ; echo FAILURE > /workspace/test-result/vm1-check-svid-go-summary' ERR
+
+    mkdir -p /workspace/test-result
+
+    echo "==> [VM-1 check-svid-go] Waiting for Workload API socket..."
+    for i in $(seq 1 60); do
+      [ -S /run/authn-scope/workload.sock ] && break
+      sleep 1
+    done
+    [ -S /run/authn-scope/workload.sock ] || { echo "[VM-1] Workload socket never appeared"; exit 1; }
+
+    echo "==> [VM-1 check-svid-go] Fetching credentials via Workload API (systemd selector: check-svid-go.service)..."
+    env USER=check-svid-go /workspace/target/release/workload-test-workload /run/authn-scope/workload.sock
+
+    cp /tmp/workload-cert-check-svid-go.pem /workspace/test-result/vm1-check-svid-go-cert.pem
+
+    echo "==> [VM-1 check-svid-go] Evaluating certificate (check-svid-go)..."
+    /workspace/target/release/check-svid-go \
+      /workspace/test-result/vm1-check-svid-go-cert.pem \
       /workspace/test-result/ca-cert.pem \
-      service-a
+      check-svid-go
 
-    echo "==> [VM-1] Running Rust gRPC test application (as service-a)..."
-    ${pkgs.util-linux}/bin/runuser -u service-a -- env USER=service-a \
-      ${authScope}/bin/grpc-app-rust server 0.0.0.0:50052 /run/authn-scope/workload.sock > /workspace/test-result/vm1-grpc-app.log 2>&1 &
+    echo SUCCESS > /workspace/test-result/vm1-check-svid-go-summary
+    echo "==> [VM-1 check-svid-go] Passed!"
+  '';
+
+  grpcAppScript = pkgs.writeShellScript "run-grpc-app-service" ''
+    set -x
+    exec >> /workspace/test-result/vm1-grpc-app.log 2>&1
+    trap 'echo "FAILED at line $LINENO: command ($BASH_COMMAND) exited with status $?" ; echo FAILURE > /workspace/test-result/vm1-grpc-app-summary' ERR
+
+    mkdir -p /workspace/test-result
+
+    echo "==> [VM-1 grpc-app] Waiting for Workload API socket..."
+    for i in $(seq 1 60); do
+      [ -S /run/authn-scope/workload.sock ] && break
+      sleep 1
+    done
+    [ -S /run/authn-scope/workload.sock ] || { echo "[VM-1] Workload socket never appeared"; exit 1; }
+
+    echo "==> [VM-1 grpc-app] Running Rust gRPC test application (systemd selector: grpc-app.service)..."
+    /workspace/target/release/grpc-app-rust server 0.0.0.0:50052 /run/authn-scope/workload.sock &
     RUST_PID=$!
 
     # Wait up to 60 seconds for VM-2 to finish its gRPC client test
     for i in $(seq 1 60); do
-      if [ -f /workspace/test-result/vm2-result-summary ]; then
+      if [ -f /workspace/test-result/vm2-grpc-app-summary ]; then
         break
       fi
       sleep 1
@@ -56,8 +96,9 @@
 
     wait $RUST_PID || true
 
+    echo SUCCESS > /workspace/test-result/vm1-grpc-app-summary
     echo SUCCESS > /workspace/test-result/vm1-result-summary
-    echo "==> [VM-1] All tests passed! Leaving VM running for live inspection."
+    echo "==> [VM-1 grpc-app] Passed!"
   '';
 in {
   imports = [
@@ -69,22 +110,31 @@ in {
   networking.firewall.enable = false;
   services.getty.autologinUser = "root";
 
+  boot.kernelParams = [
+    "TERM=dumb"
+    "systemd.tty.term.console=dumb"
+    "systemd.tty.term.ttyS0=dumb"
+    "systemd.tty.rows.console=24"
+    "systemd.tty.columns.console=80"
+    "systemd.tty.rows.ttyS0=24"
+    "systemd.tty.columns.ttyS0=80"
+    "systemd.color=0"
+    "systemd.show_status=auto"
+  ];
+
+  systemd.services."serial-getty@ttyS0".environment.TERM = "dumb";
+
   users.users.nixos = {
     isNormalUser = true;
     initialPassword = "nixos";
     extraGroups = ["wheel"];
   };
 
-  users.users.service-a = {
-    isSystemUser = true;
-    group = "service-a";
-  };
-  users.groups.service-a = {};
-
   time.timeZone = "Asia/Dubai";
   environment.systemPackages = [pkgs.tpm2-tools];
 
   virtualisation.vmVariant = {
+    virtualisation.graphics = false;
     virtualisation.writableStoreUseTmpfs = true;
     virtualisation.sharedDirectories.workspace = {
       source = toString ./../..;
@@ -108,20 +158,45 @@ in {
     package = authScope;
     settings = {
       vm_name = "vm-1";
-      server_port = 900;
+      transport = "tcp";
+      server_addr = "10.0.2.2:9000";
       workload_api_socket = "/run/authn-scope/workload.sock";
     };
   };
 
-  systemd.services.authn-scope-evaluator-test = {
-    description = "Run VM-1 Evaluator Test and Shutdown VM";
+  systemd.services.check-svid-rust = {
+    description = "Run VM-1 check-svid-rust test";
     wantedBy = ["multi-user.target"];
     after = ["authn-scope-agent.service" "network.target"];
     requires = ["authn-scope-agent.service"];
     serviceConfig = {
       Type = "oneshot";
       User = "root";
-      ExecStart = evalTestScript;
+      ExecStart = checkSvidRustScript;
+    };
+  };
+
+  systemd.services.check-svid-go = {
+    description = "Run VM-1 check-svid-go test";
+    wantedBy = ["multi-user.target"];
+    after = ["authn-scope-agent.service" "network.target"];
+    requires = ["authn-scope-agent.service"];
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      ExecStart = checkSvidGoScript;
+    };
+  };
+
+  systemd.services.grpc-app = {
+    description = "Run VM-1 gRPC server application test";
+    wantedBy = ["multi-user.target"];
+    after = ["authn-scope-agent.service" "network.target"];
+    requires = ["authn-scope-agent.service"];
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      ExecStart = grpcAppScript;
     };
   };
 

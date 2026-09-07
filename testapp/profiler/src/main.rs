@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 identity: format!("service-{}", i),
                 vm_name: "test-vm".to_string(),
                 cid: 3,
+                trust_domain: Some("example.org"),
                 ip: Some("127.0.0.1".to_string()),
                 validity_seconds: 3600,
             },
