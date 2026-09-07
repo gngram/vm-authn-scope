@@ -27,7 +27,7 @@ Securely issue identity to workloads running in each VM. The identity should adh
   - The CA can be moved to `AdminVM` by forwarding the vsock port in the host kernel, or by running over the built-in TCP transport without requiring vsock forwarding.
 - **`SPIRE`**:
   - The SPIRE Server runs as a TCP daemon and can be placed in `AdminVM` or the host.
-  - However, it requires a full TCP/IP network stack running, acan not issue identity to workloads which need identity in early stage of VM boot.
+    However, it requires a full TCP/IP network stack running, it can not issue identity to workloads which need identity in early stage of VM boot.
 
 ### Requirement 2: It must attest each VM node before issuing identity to workloads.
 - **`ghaf-secureid`**:
